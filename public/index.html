@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="it">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Storyhunter — simulatore locale</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,560;0,9..144,640;1,9..144,560&family=Outfit:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="top">
+      <button type="button" id="brand" class="brand">
+        <span class="brand-mark">Storyhunter</span>
+        <span class="brand-kicker">Il biografo invisibile</span>
+      </button>
+      <p id="top-kicker" class="top-kicker">Simulatore locale</p>
+      <div class="top-actions">
+        <span id="llm-pill" class="pill">OpenAI</span>
+        <button type="button" id="open-settings" class="ghost">Impostazioni</button>
+      </div>
+    </header>
+
+    <div id="banner" class="banner" role="status" hidden></div>
+
+    <main id="start" class="start"></main>
+
+    <div id="workspace" class="workspace" hidden>
+      <aside id="rail" class="rail"></aside>
+      <div class="workspace-main">
+        <section id="studio"></section>
+        <section id="notebook" hidden></section>
+        <section id="memory" hidden></section>
+        <section id="volume" hidden></section>
+      </div>
+    </div>
+
+    <div id="busy" hidden>
+      <p id="busy-text"></p>
+    </div>
+
+    <dialog id="settings">
+      <form id="settings-form">
+        <p class="eyebrow">Motore narrativo</p>
+        <h2>OpenAI</h2>
+        <p class="lede">
+          I capitoli escono da OpenAI. Puoi incollare la chiave qui: resta nel file
+          <code>data/settings.json</code> di questo computer. In alternativa metti
+          <code>OPENAI_API_KEY</code> nel file <code>.env</code>.
+        </p>
+        <label>
+          Chiave API
+          <input name="api_key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-..." />
+        </label>
+        <label>
+          Modello
+          <select name="model" id="model-select"></select>
+        </label>
+        <p class="quiet">
+          Una chiave si crea dalla
+          <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer">console OpenAI</a>.
+          Il modello in uso è GPT-4.1 mini.
+        </p>
+        <div class="dialog-actions">
+          <button type="submit" class="solid">Salva</button>
+          <button type="button" id="clear-key" class="ghost">Rimuovi la chiave salvata</button>
+          <button type="button" id="close-settings" class="ghost">Chiudi</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
