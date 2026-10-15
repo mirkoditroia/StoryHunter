@@ -41,12 +41,7 @@ export const MODELS = [
   {
     id: "gemini-3.5-flash-lite",
     provider: "google",
-    label: "Gemini 3.5 Flash-Lite — il più adatto a prezzo basso",
-  },
-  {
-    id: "gemini-2.5-flash-lite",
-    provider: "google",
-    label: "Gemini 2.5 Flash-Lite — il più economico",
+    label: "Gemini 3.5 Flash-Lite — il più economico",
   },
   {
     id: "gemini-2.5-flash",

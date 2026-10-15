@@ -140,20 +140,19 @@ async function askJson(messages, temperature, maxTokens) {
 }
 
 async function askOpenAI({ apiKey, model }, messages, temperature, maxTokens) {
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
+  const response = await llmFetch("https://api.openai.com/v1/chat/completions", {
+    vendor: "OpenAI",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
+    body: {
       model,
       temperature,
       max_completion_tokens: maxTokens,
       response_format: { type: "json_object" },
       messages,
-    }),
-    signal: AbortSignal.timeout(120000),
+    },
   });
 
   const data = await response.json().catch(() => ({}));
@@ -185,20 +184,19 @@ async function askGoogle({ apiKey, model }, messages, temperature, maxTokens) {
     generationConfig.thinkingConfig = { thinkingLevel: "minimal" };
   }
 
-  const response = await fetch(
+  const response = await llmFetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
     {
-      method: "POST",
+      vendor: "Google",
       headers: {
         "x-goog-api-key": apiKey,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
+      body: {
         systemInstruction: system ? { parts: [{ text: system }] } : undefined,
         contents,
         generationConfig,
-      }),
-      signal: AbortSignal.timeout(120000),
+      },
     }
   );
 
@@ -208,6 +206,9 @@ async function askGoogle({ apiKey, model }, messages, temperature, maxTokens) {
     if (response.status === 400 && /API key/i.test(detail)) throw new HttpError(401, "Google ha rifiutato la chiave API.");
     if (response.status === 401 || response.status === 403) throw new HttpError(401, "Google ha rifiutato la chiave API.");
     if (response.status === 429) throw new HttpError(429, "Google ha limitato le richieste. Attendi un minuto e riprova.");
+    if (response.status === 404 && /no longer available/i.test(detail)) {
+      throw new HttpError(400, `Google: il modello ${model} non è più disponibile. Scegline un altro dalle impostazioni.`);
+    }
     throw new HttpError(response.status === 400 ? 400 : 502, `Google: ${detail}`);
   }
 
@@ -215,6 +216,45 @@ async function askGoogle({ apiKey, model }, messages, temperature, maxTokens) {
   if (block) throw new HttpError(502, `Google ha bloccato la richiesta (${block}).`);
   const parts = data?.candidates?.[0]?.content?.parts || [];
   return parts.filter((part) => part?.text && !part.thought).map((part) => part.text).join("");
+}
+
+async function llmFetch(url, { vendor, headers, body }) {
+  try {
+    return await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(120000),
+    });
+  } catch (error) {
+    throw translateFetchError(error, vendor);
+  }
+}
+
+function translateFetchError(error, vendor) {
+  const cause = error?.cause;
+  const code = cause?.code || error?.code || "";
+  const timedOut =
+    error?.name === "TimeoutError" ||
+    cause?.name === "TimeoutError" ||
+    error?.name === "AbortError";
+  if (timedOut) {
+    return new HttpError(504, `${vendor} non ha risposto in tempo. Riprova tra un momento.`);
+  }
+  if (code === "ENOTFOUND" || code === "EAI_AGAIN") {
+    return new HttpError(
+      503,
+      `Impossibile raggiungere ${vendor}: il DNS non risolve il server. Controlla la connessione e riavvia il simulatore da un terminale normale (npm start).`
+    );
+  }
+  if (code === "ECONNRESET" || code === "ECONNREFUSED" || code === "ETIMEDOUT" || code === "UND_ERR_CONNECT_TIMEOUT") {
+    return new HttpError(503, `Connessione a ${vendor} interrotta. Riprova.`);
+  }
+  const detail = cause?.message || error?.message || "errore di rete";
+  if (detail === "fetch failed") {
+    return new HttpError(503, `${vendor} irraggiungibile. Controlla la rete e riprova.`);
+  }
+  return new HttpError(503, `${vendor} irraggiungibile: ${detail}`);
 }
 
 async function clientOrThrow() {

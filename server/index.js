@@ -1,7 +1,10 @@
+import dns from "node:dns";
 import dotenv from "dotenv";
 import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+dns.setDefaultResultOrder("ipv4first");
 import {
   DEFAULT_MODEL,
   GENDERS,
