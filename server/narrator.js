@@ -1,4 +1,4 @@
-import { DEFAULT_MODEL, resolveModel } from "./meta.js";
+import { DEFAULT_MODEL, providerOf, resolveModel } from "./meta.js";
 import { HttpError } from "./errors.js";
 import { findBanned } from "./transfiguration.js";
 import {
@@ -14,15 +14,26 @@ const ENDINGS = new Set(["AT_HOME_RESTING", "OUTSIDE_CLIFFHANGER", "OUTSIDE_AWAY
 
 export async function llmStatus() {
   const settings = await readSettings();
-  const envKey = process.env.OPENAI_API_KEY || "";
-  const fileKey = settings.api_key || "";
-  const apiKey = fileKey || envKey;
+  const openaiFile = settings.api_key || "";
+  const openaiEnv = process.env.OPENAI_API_KEY || "";
+  const googleFile = settings.google_api_key || "";
+  const googleEnv = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "";
   const model = resolveModel(settings.model || process.env.OPENAI_MODEL || DEFAULT_MODEL);
+  const provider = providerOf(model);
+  const openaiKey = openaiFile || openaiEnv;
+  const googleKey = googleFile || googleEnv;
+  const activeKey = provider === "google" ? googleKey : openaiKey;
+  const activeFile = provider === "google" ? googleFile : openaiFile;
+  const activeEnv = provider === "google" ? googleEnv : openaiEnv;
   return {
-    configured: Boolean(apiKey),
-    source: fileKey ? "file" : envKey ? "env" : "missing",
+    provider,
+    provider_label: provider === "google" ? "Google" : "OpenAI",
+    configured: Boolean(activeKey),
+    source: activeFile ? "file" : activeEnv ? "env" : "missing",
     model,
-    hint: mask(apiKey),
+    hint: mask(activeKey),
+    openai: keyStatus(openaiKey, openaiFile, openaiEnv),
+    google: keyStatus(googleKey, googleFile, googleEnv),
   };
 }
 
@@ -121,7 +132,14 @@ export async function composeVolume(book) {
 }
 
 async function askJson(messages, temperature, maxTokens) {
-  const { apiKey, model } = await clientOrThrow();
+  const client = await clientOrThrow();
+  const content = client.provider === "google"
+    ? await askGoogle(client, messages, temperature, maxTokens)
+    : await askOpenAI(client, messages, temperature, maxTokens);
+  return parseModelJson(content, client.provider === "google" ? "Google" : "OpenAI");
+}
+
+async function askOpenAI({ apiKey, model }, messages, temperature, maxTokens) {
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -145,27 +163,93 @@ async function askJson(messages, temperature, maxTokens) {
     if (response.status === 429) throw new HttpError(429, "OpenAI ha limitato le richieste. Attendi un minuto e riprova.");
     throw new HttpError(response.status === 400 ? 400 : 502, `OpenAI: ${detail}`);
   }
+  return data?.choices?.[0]?.message?.content;
+}
 
-  const content = data?.choices?.[0]?.message?.content;
-  return parseModelJson(content);
+async function askGoogle({ apiKey, model }, messages, temperature, maxTokens) {
+  const system = messages.filter((message) => message.role === "system").map((message) => message.content).join("\n\n");
+  const contents = messages
+    .filter((message) => message.role !== "system")
+    .map((message) => ({
+      role: message.role === "assistant" ? "model" : "user",
+      parts: [{ text: message.content }],
+    }));
+  const generationConfig = {
+    maxOutputTokens: maxTokens,
+    responseMimeType: "application/json",
+  };
+  if (model.startsWith("gemini-2.")) {
+    generationConfig.temperature = temperature;
+    generationConfig.thinkingConfig = { thinkingBudget: 0 };
+  } else {
+    generationConfig.thinkingConfig = { thinkingLevel: "minimal" };
+  }
+
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+    {
+      method: "POST",
+      headers: {
+        "x-goog-api-key": apiKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        systemInstruction: system ? { parts: [{ text: system }] } : undefined,
+        contents,
+        generationConfig,
+      }),
+      signal: AbortSignal.timeout(120000),
+    }
+  );
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const detail = data?.error?.message || "Errore Google";
+    if (response.status === 400 && /API key/i.test(detail)) throw new HttpError(401, "Google ha rifiutato la chiave API.");
+    if (response.status === 401 || response.status === 403) throw new HttpError(401, "Google ha rifiutato la chiave API.");
+    if (response.status === 429) throw new HttpError(429, "Google ha limitato le richieste. Attendi un minuto e riprova.");
+    throw new HttpError(response.status === 400 ? 400 : 502, `Google: ${detail}`);
+  }
+
+  const block = data?.promptFeedback?.blockReason;
+  if (block) throw new HttpError(502, `Google ha bloccato la richiesta (${block}).`);
+  const parts = data?.candidates?.[0]?.content?.parts || [];
+  return parts.filter((part) => part?.text && !part.thought).map((part) => part.text).join("");
 }
 
 async function clientOrThrow() {
   const settings = await readSettings();
-  const apiKey = settings.api_key || process.env.OPENAI_API_KEY || "";
   const model = resolveModel(settings.model || process.env.OPENAI_MODEL || DEFAULT_MODEL);
+  const provider = providerOf(model);
+  const apiKey = provider === "google"
+    ? settings.google_api_key || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || ""
+    : settings.api_key || process.env.OPENAI_API_KEY || "";
+  if (!apiKey && provider === "google") {
+    throw new HttpError(
+      400,
+      "Manca la chiave API Google. Inseriscila dalle impostazioni, oppure in GEMINI_API_KEY nel file .env."
+    );
+  }
   if (!apiKey) {
     throw new HttpError(
       400,
       "Manca la chiave API OpenAI. Inseriscila dalle impostazioni, oppure in OPENAI_API_KEY nel file .env."
     );
   }
-  return { apiKey, model };
+  return { provider, apiKey, model };
 }
 
-function parseModelJson(content) {
+function keyStatus(key, fileKey, envKey) {
+  return {
+    configured: Boolean(key),
+    source: fileKey ? "file" : envKey ? "env" : "missing",
+    hint: mask(key),
+  };
+}
+
+function parseModelJson(content, vendor = "OpenAI") {
   if (!content || !String(content).trim()) {
-    throw new HttpError(502, "OpenAI ha risposto vuoto.");
+    throw new HttpError(502, `${vendor} ha risposto vuoto.`);
   }
   let text = String(content).trim();
   if (text.startsWith("```")) {
@@ -183,7 +267,7 @@ function parseModelJson(content) {
         /* continua sotto */
       }
     }
-    throw new HttpError(502, "OpenAI non ha restituito un JSON valido.");
+    throw new HttpError(502, `${vendor} non ha restituito un JSON valido.`);
   }
 }
 

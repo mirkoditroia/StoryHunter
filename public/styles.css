@@ -374,6 +374,8 @@ pre.json-view {
 
 dialog {
   width: min(520px, calc(100% - 2rem));
+  max-height: calc(100% - 2rem);
+  overflow: auto;
   color: var(--paper);
   border: 1px solid var(--line);
 }

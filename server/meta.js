@@ -25,25 +25,47 @@ export const GENDERS = [
 export const MODELS = [
   {
     id: "gpt-4.1-mini",
+    provider: "openai",
     label: "GPT-4.1 mini — miglior rapporto qualità/prezzo",
   },
   {
     id: "gpt-4o-mini",
+    provider: "openai",
     label: "GPT-4o mini — il più economico",
   },
   {
     id: "gpt-5-mini",
+    provider: "openai",
     label: "GPT-5 mini — un po' più caro",
+  },
+  {
+    id: "gemini-3.5-flash-lite",
+    provider: "google",
+    label: "Gemini 3.5 Flash-Lite — il più adatto a prezzo basso",
+  },
+  {
+    id: "gemini-2.5-flash-lite",
+    provider: "google",
+    label: "Gemini 2.5 Flash-Lite — il più economico",
+  },
+  {
+    id: "gemini-2.5-flash",
+    provider: "google",
+    label: "Gemini 2.5 Flash — prosa più ricca",
   },
 ];
 
 export const DEFAULT_MODEL = "gpt-4.1-mini";
 
-const KNOWN_MODELS = new Set(MODELS.map((model) => model.id));
+const KNOWN_MODELS = new Map(MODELS.map((model) => [model.id, model]));
 
 export function resolveModel(model) {
   const chosen = String(model || "").trim();
   return KNOWN_MODELS.has(chosen) ? chosen : DEFAULT_MODEL;
+}
+
+export function providerOf(model) {
+  return KNOWN_MODELS.get(resolveModel(model))?.provider || "openai";
 }
 
 export const SLOT_DEFS = [

@@ -20,10 +20,11 @@ export async function readSettings() {
     const parsed = JSON.parse(raw);
     return {
       api_key: typeof parsed.api_key === "string" ? parsed.api_key.trim() : "",
+      google_api_key: typeof parsed.google_api_key === "string" ? parsed.google_api_key.trim() : "",
       model: typeof parsed.model === "string" ? parsed.model.trim() : "",
     };
   } catch {
-    return { api_key: "", model: "" };
+    return { api_key: "", google_api_key: "", model: "" };
   }
 }
 
@@ -31,7 +32,11 @@ export async function writeSettings(partial) {
   const current = await readSettings();
   const next = { ...current };
   if (partial.clear_key) next.api_key = "";
+  if (partial.clear_google_key) next.google_api_key = "";
   if (typeof partial.api_key === "string" && partial.api_key.trim()) next.api_key = partial.api_key.trim();
+  if (typeof partial.google_api_key === "string" && partial.google_api_key.trim()) {
+    next.google_api_key = partial.google_api_key.trim();
+  }
   if (typeof partial.model === "string") next.model = partial.model.trim();
   await fs.writeFile(settingsFile, JSON.stringify(next, null, 2), "utf8");
   return next;

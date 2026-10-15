@@ -75,8 +75,10 @@ app.put("/api/settings", async (req, res, next) => {
   try {
     await writeSettings({
       api_key: req.body?.api_key,
+      google_api_key: req.body?.google_api_key,
       model: req.body?.model,
       clear_key: Boolean(req.body?.clear_key),
+      clear_google_key: Boolean(req.body?.clear_google_key),
     });
     res.json({ llm: await llmStatus() });
   } catch (error) {

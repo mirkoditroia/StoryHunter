@@ -109,25 +109,54 @@ function fillModelSelect() {
   const current = state.meta?.llm?.model || state.meta?.default_model;
   const options = [...(state.meta?.models || [])];
   if (current && !options.some((model) => model.id === current)) {
-    options.unshift({ id: current, label: current });
+    options.unshift({ id: current, label: current, provider: "openai" });
   }
-  select.innerHTML = options.map((model) => `<option value="${esc(model.id)}">${esc(model.label)}</option>`).join("");
+  const groups = [
+    ["openai", "OpenAI"],
+    ["google", "Google"],
+  ];
+  select.innerHTML = groups
+    .map(([id, label]) => {
+      const items = options.filter((model) => (model.provider || "openai") === id);
+      if (!items.length) return "";
+      const html = items.map((model) => `<option value="${esc(model.id)}">${esc(model.label)}</option>`).join("");
+      return `<optgroup label="${esc(label)}">${html}</optgroup>`;
+    })
+    .join("");
   select.value = current || "";
+}
+
+function engineName() {
+  return state.meta?.llm?.provider_label || "OpenAI";
+}
+
+function paintKeyHint(selector, info, label) {
+  const node = $(selector);
+  if (!node) return;
+  if (!info?.configured) {
+    node.textContent = `Nessuna chiave ${label} salvata.`;
+    return;
+  }
+  const where = info.source === "env" ? "dal file .env" : "su questo computer";
+  node.textContent = `Chiave ${label} ${where}: ${info.hint}`;
 }
 
 function renderChrome() {
   const llm = state.meta?.llm;
   const pill = $("#llm-pill");
+  const name = llm?.provider_label || "OpenAI";
   if (!llm) {
     pill.textContent = "OpenAI";
     pill.className = "pill";
   } else if (llm.configured) {
-    pill.textContent = `OpenAI · ${llm.model}`;
+    pill.textContent = `${name} · ${llm.model}`;
     pill.className = "pill is-on";
   } else {
-    pill.textContent = "OpenAI · chiave assente";
+    pill.textContent = `${name} · chiave assente`;
     pill.className = "pill is-off";
   }
+  paintKeyHint("#openai-hint", llm?.openai, "OpenAI");
+  paintKeyHint("#google-hint", llm?.google, "Google");
 
   const book = state.book;
   if (!book || state.view === "start") {
@@ -164,7 +193,7 @@ function renderStart() {
     <section class="manifesto">
       <p class="eyebrow">Localhost</p>
       <h1>La giornata diventa un capitolo.</h1>
-      <p class="lede">Qui i sensori sono leve. Componi la giornata in quattro fasce, il Daily Merger la cuce in un solo JSON, OpenAI scrive il capitolo e aggiorna la memoria del romanzo.</p>
+      <p class="lede">Qui i sensori sono leve. Componi la giornata in quattro fasce, il Daily Merger la cuce in un solo JSON, il modello scelto scrive il capitolo e aggiorna la memoria del romanzo.</p>
       ${
         state.books.length
           ? `<div class="shelf"><p class="eyebrow">Cicli aperti</p>${shelf}</div>`
@@ -640,7 +669,7 @@ function chapterCard(entry, isLast) {
         <p>Il foglio è chiuso. Puoi aprirlo adesso, o conservarlo per quando il ciclo sarà intero.</p>
         <div class="actions no-print">
           <button type="button" class="solid" data-open-chapter="${entry.day}">Apri il sigillo</button>
-          ${isLast ? `<button type="button" class="ghost" id="rewrite">Riscrivi con OpenAI</button>` : ""}
+          ${isLast ? `<button type="button" class="ghost" id="rewrite">Riscrivi con ${esc(engineName())}</button>` : ""}
         </div>
       </article>`;
   }
@@ -653,7 +682,7 @@ function chapterCard(entry, isLast) {
       ${warnings ? `<ul class="quiet">${warnings}</ul>` : ""}
       ${
         isLast
-          ? `<button type="button" class="ghost no-print" id="rewrite">Riscrivi questo capitolo con OpenAI</button>`
+          ? `<button type="button" class="ghost no-print" id="rewrite">Riscrivi questo capitolo con ${esc(engineName())}</button>`
           : ""
       }
     </article>`;
@@ -738,7 +767,7 @@ function renderVolume() {
               <div class="prose">${prose(closing.back_cover)}</div>
             </section>
           </article>`
-        : `<section class="panel"><p>I capitoli ci sono. Manca ancora il frontespizio: lo chiede OpenAI all'arco intero.</p></section>`
+        : `<section class="panel"><p>I capitoli ci sono. Manca ancora il frontespizio: lo chiede ${esc(engineName())} all'arco intero.</p></section>`
     }
   `;
 }
@@ -869,7 +898,7 @@ async function mergeSlots() {
 async function generate(body, busyText) {
   if (state.busy) return;
   if (!state.meta.llm.configured) {
-    setBanner("error", "Manca la chiave API OpenAI.");
+    setBanner("error", `Manca la chiave API ${engineName()}.`);
     $("#settings").showModal();
     return;
   }
@@ -897,7 +926,7 @@ async function generate(body, busyText) {
     card?.scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (error) {
     setBanner("error", error.message);
-    if (/chiave API OpenAI/i.test(error.message)) $("#settings").showModal();
+    if (/chiave API/i.test(error.message)) $("#settings").showModal();
   } finally {
     setBusy("");
   }
@@ -912,12 +941,13 @@ function readPayloadText() {
 async function saveSettings(event) {
   event.preventDefault();
   const data = new FormData(event.currentTarget);
-  setBusy("Salvo la configurazione di OpenAI…");
+  setBusy("Salvo la configurazione…");
   try {
     const result = await api("/api/settings", {
       method: "PUT",
       body: {
         api_key: String(data.get("api_key") || ""),
+        google_api_key: String(data.get("google_api_key") || ""),
         model: String(data.get("model") || ""),
       },
     });
@@ -925,8 +955,14 @@ async function saveSettings(event) {
     fillModelSelect();
     renderChrome();
     event.currentTarget.elements.api_key.value = "";
+    event.currentTarget.elements.google_api_key.value = "";
     $("#settings").close();
-    setBanner("ok", result.llm.configured ? `OpenAI pronto con ${result.llm.model}.` : "Nessuna chiave OpenAI configurata.");
+    setBanner(
+      "ok",
+      result.llm.configured
+        ? `${result.llm.provider_label} pronto con ${result.llm.model}.`
+        : `Nessuna chiave ${result.llm.provider_label} configurata.`
+    );
   } catch (error) {
     setBanner("error", error.message);
   } finally {
@@ -934,16 +970,25 @@ async function saveSettings(event) {
   }
 }
 
-async function clearKey() {
+async function clearKey(which) {
   setBusy("");
   try {
     const result = await api("/api/settings", {
       method: "PUT",
-      body: { clear_key: true, model: $("#model-select").value },
+      body: which === "google"
+        ? { clear_google_key: true, model: $("#model-select").value }
+        : { clear_key: true, model: $("#model-select").value },
     });
     state.meta.llm = result.llm;
     renderChrome();
-    setBanner("ok", result.llm.configured ? "Rimossa la chiave del file. Resta quella dell'ambiente." : "Chiave rimossa da questo computer.");
+    const name = which === "google" ? "Google" : "OpenAI";
+    const info = which === "google" ? result.llm.google : result.llm.openai;
+    setBanner(
+      "ok",
+      info.configured
+        ? `Rimossa la chiave ${name} del file. Resta quella dell'ambiente.`
+        : `Chiave ${name} rimossa da questo computer.`
+    );
   } catch (error) {
     setBanner("error", error.message);
   }
@@ -1018,7 +1063,11 @@ async function onClick(event) {
     return;
   }
   if (event.target.closest("#clear-key")) {
-    await clearKey();
+    await clearKey("openai");
+    return;
+  }
+  if (event.target.closest("#clear-google-key")) {
+    await clearKey("google");
     return;
   }
   if (profile) {
@@ -1101,7 +1150,7 @@ async function onClick(event) {
   if (event.target.closest("#simulate")) {
     await generate(
       { source: "slots", date: state.date, slots: slotsForApi() },
-      "OpenAI sta scrivendo il capitolo. Può volerci un minuto."
+      `${engineName()} sta scrivendo il capitolo. Può volerci un minuto.`
     );
     return;
   }
@@ -1115,7 +1164,7 @@ async function onClick(event) {
     }
     await generate(
       { source: state.raw ? "raw" : "editor", payload, date: state.date },
-      "OpenAI sta scrivendo dal JSON unico."
+      `${engineName()} sta scrivendo dal JSON unico.`
     );
     return;
   }
@@ -1141,17 +1190,17 @@ async function onClick(event) {
     return;
   }
   if (event.target.closest("#rewrite")) {
-    if (!confirm("OpenAI riscrive l'ultimo capitolo e lo sigilla di nuovo. La memoria torna a prima di quel giorno.")) return;
-    await generate({ regenerate: true }, "OpenAI sta riscrivendo l'ultimo capitolo.");
+    if (!confirm(`${engineName()} riscrive l'ultimo capitolo e lo sigilla di nuovo. La memoria torna a prima di quel giorno.`)) return;
+    await generate({ regenerate: true }, `${engineName()} sta riscrivendo l'ultimo capitolo.`);
     return;
   }
   if (event.target.closest("#compose")) {
     if (!state.meta.llm.configured) {
-      setBanner("error", "Manca la chiave API OpenAI.");
+      setBanner("error", `Manca la chiave API ${engineName()}.`);
       $("#settings").showModal();
       return;
     }
-    setBusy("OpenAI sta componendo frontespizio e quarta…");
+    setBusy(`${engineName()} sta componendo frontespizio e quarta…`);
     try {
       const result = await api(`/api/books/${state.book.id}/close`, {
         method: "POST",

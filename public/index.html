@@ -46,28 +46,37 @@
     <dialog id="settings">
       <form id="settings-form">
         <p class="eyebrow">Motore narrativo</p>
-        <h2>OpenAI</h2>
+        <h2>OpenAI e Google</h2>
         <p class="lede">
-          I capitoli escono da OpenAI. Puoi incollare la chiave qui: resta nel file
-          <code>data/settings.json</code> di questo computer. In alternativa metti
-          <code>OPENAI_API_KEY</code> nel file <code>.env</code>.
+          I capitoli escono dal modello scelto. Le chiavi restano nel file
+          <code>data/settings.json</code> di questo computer. In alternativa usa
+          <code>OPENAI_API_KEY</code> e <code>GEMINI_API_KEY</code> nel file <code>.env</code>.
         </p>
         <label>
-          Chiave API
+          Chiave OpenAI
           <input name="api_key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-..." />
         </label>
+        <p class="quiet" id="openai-hint"></p>
+        <label>
+          Chiave Google
+          <input name="google_api_key" type="password" autocomplete="off" spellcheck="false" placeholder="AIza..." />
+        </label>
+        <p class="quiet" id="google-hint"></p>
         <label>
           Modello
           <select name="model" id="model-select"></select>
         </label>
         <p class="quiet">
-          Una chiave si crea dalla
-          <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer">console OpenAI</a>.
-          Il modello in uso è GPT-4.1 mini.
+          Le chiavi si creano dalla
+          <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer">console OpenAI</a>
+          e da
+          <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">Google AI Studio</a>.
+          Un campo vuoto lascia la chiave già salvata.
         </p>
         <div class="dialog-actions">
           <button type="submit" class="solid">Salva</button>
-          <button type="button" id="clear-key" class="ghost">Rimuovi la chiave salvata</button>
+          <button type="button" id="clear-key" class="ghost">Rimuovi OpenAI</button>
+          <button type="button" id="clear-google-key" class="ghost">Rimuovi Google</button>
           <button type="button" id="close-settings" class="ghost">Chiudi</button>
         </div>
       </form>
