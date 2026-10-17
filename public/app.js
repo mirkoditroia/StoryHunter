@@ -2,17 +2,21 @@ const state = {
   meta: null,
   books: [],
   book: null,
-  view: "start",
+  view: "cover",
   form: blankForm(),
   slots: [],
-  activeSlot: 1,
+  activeSlot: 0,
   date: "",
   payload: null,
   payloadText: "",
+  notesText: "",
   raw: false,
   mountedKey: "",
   busy: false,
+  motion: "enter-cover",
 };
+
+const BARE_VIEWS = new Set(["cover", "soglia", "conferma"]);
 
 const CUTOFF = {
   AT_HOME_RESTING: "Chiude in casa",
@@ -80,12 +84,20 @@ function prose(text) {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(path, {
-    method: options.method || "GET",
-    headers: { "Content-Type": "application/json" },
-    body: options.body ? JSON.stringify(options.body) : undefined,
-    signal: options.signal,
-  });
+  let response;
+  try {
+    response = await fetch(path, {
+      method: options.method || "GET",
+      headers: { "Content-Type": "application/json" },
+      body: options.body ? JSON.stringify(options.body) : undefined,
+      signal: options.signal,
+    });
+  } catch (error) {
+    if (error?.name === "TimeoutError" || error?.name === "AbortError") {
+      throw new Error("La scrittura sta impiegando troppo. Riprova tra un attimo.");
+    }
+    throw new Error("Il server locale non risponde. Ricarica la pagina, oppure riavvia Storyhunter.");
+  }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || "Richiesta non riuscita.");
   return data;
@@ -141,6 +153,146 @@ function paintKeyHint(selector, info, label) {
   node.textContent = `Chiave ${label} ${where}: ${info.hint}`;
 }
 
+function lensOf(genre) {
+  if (!genre) return "";
+  if (genre.startsWith("Noir")) return "noir";
+  if (genre.startsWith("Realismo")) return "realismo";
+  if (genre.startsWith("Commedia")) return "commedia";
+  return "";
+}
+
+function selectedTrait(questionId) {
+  const question = state.meta?.questions.find((item) => item.id === questionId);
+  return question?.options.find((option) => option.id === state.form.answers[questionId]);
+}
+
+function homeAliasPreview(genre, metaphorDomain = "") {
+  const domain = String(metaphorDomain || "").toLowerCase();
+  if (genre.startsWith("Noir")) {
+    if (domain.startsWith("arti")) return "La Camera Oscura";
+    if (domain.startsWith("cucina")) return "La Cucina Fredda";
+    if (domain.startsWith("sport")) return "Lo Stanzino del Corpo";
+    if (domain.startsWith("musica")) return "La Stanza Sorda";
+    return "L'Appartamento in Penombra";
+  }
+  if (genre.startsWith("Realismo")) {
+    if (domain.startsWith("cucina")) return "Il Rifugio delle Spezie";
+    if (domain.startsWith("arti")) return "La Casa delle Finestre Dipinte";
+    if (domain.startsWith("sport")) return "La Stanza che Respira";
+    if (domain.startsWith("musica")) return "La Casa delle Corde Mute";
+    return "La Casa dalle Pareti Larghe";
+  }
+  if (domain.startsWith("cucina")) return "Il Quartier Generale delle Pentole";
+  if (domain.startsWith("arti")) return "Il Museo Domestico";
+  if (domain.startsWith("sport")) return "La Palestra del Divano";
+  return "Il Quartier Generale del Divano";
+}
+
+function voiceReady() {
+  if (!state.form.genre) return false;
+  return state.meta.questions.every((question) => state.form.answers[question.id]);
+}
+
+function anagraficaProblems() {
+  if (!state.form.name.trim()) return "Manca il nome.";
+  if (!state.form.gender) return "Scegli il genere anagrafico.";
+  const age = Number(state.form.age);
+  if (!Number.isInteger(age) || age < 16 || age > 99) return "L'età deve essere un numero fra 16 e 99.";
+  return "";
+}
+
+function formProblems() {
+  const first = anagraficaProblems();
+  if (first) return first;
+  if (!state.form.genre) return "Scegli il genere letterario.";
+  const missing = state.meta.questions.find((question) => !state.form.answers[question.id]);
+  if (missing) return `Manca una risposta: ${missing.title}.`;
+  return "";
+}
+
+function go(view, motion = "enter-forward") {
+  if (view === "slot" || view === "merge") view = "today";
+  state.view = view;
+  state.motion = motion;
+  if (view === "today") syncStudio();
+  render();
+}
+
+function prefersReducedMotion() {
+  return window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+}
+
+function render() {
+  const stage = $("#stage");
+  document.querySelectorAll(".page-ghost-host").forEach((node) => node.remove());
+  stage.classList.remove("enter-forward", "enter-back", "enter-cover", "slot-next", "slot-prev", "is-turning", "is-turning-back");
+  const previous = stage.querySelector(":scope > .page");
+  const backward = state.motion === "enter-back" || state.motion === "slot-prev";
+  const turning = Boolean(previous) && state.motion !== "enter-cover" && !prefersReducedMotion();
+  const outgoing = turning ? previous.getBoundingClientRect() : null;
+  const ghost = turning ? document.createElement("div") : null;
+  const host = turning ? document.createElement("div") : null;
+  if (ghost && host && outgoing) {
+    host.className = "page-ghost-host";
+    ghost.className = `page-ghost${backward ? " is-back" : ""}`;
+    ghost.style.top = `${outgoing.top}px`;
+    ghost.style.left = `${outgoing.left}px`;
+    ghost.style.width = `${outgoing.width}px`;
+    ghost.style.height = `${outgoing.height}px`;
+    const clone = previous.cloneNode(true);
+    clone.scrollTop = previous.scrollTop;
+    ghost.append(clone);
+    host.append(ghost);
+    document.body.append(host);
+  }
+
+  const genre = state.book?.book_config.genre || state.form.genre;
+  document.body.dataset.lens = lensOf(genre);
+  $("#chrome").hidden = BARE_VIEWS.has(state.view);
+  renderChrome();
+  const html = {
+    cover: renderCover,
+    soglia: renderSoglia,
+    anagrafica: renderAnagrafica,
+    voce: renderVoce,
+    conferma: renderConferma,
+    today: renderToday,
+    slot: renderSlotPage,
+    merge: renderMergePage,
+    notebook: renderNotebook,
+    memory: renderMemory,
+    volume: renderVolume,
+  }[state.view];
+  const turnClass = backward ? "is-turning-back" : "is-turning";
+  stage.classList.add(ghost ? turnClass : state.motion);
+  stage.innerHTML = html ? html() : "";
+  if (state.view === "slot") renderPlaces();
+  if (state.view === "anagrafica") requestAnimationFrame(() => bindDaysSlider());
+  if (state.view === "merge") {
+    const area = $("#payload-json");
+    if (area) area.value = state.payloadText;
+    renderSummary(state.payload);
+  }
+
+  if (ghost && host) {
+    const settle = (event) => {
+      if (!host.isConnected) return;
+      if (event && event.target !== ghost) return;
+      if (event && event.animationName && !String(event.animationName).startsWith("leafTurn")) return;
+      ghost.removeEventListener("animationend", settle);
+      host.remove();
+      stage.classList.remove("is-turning", "is-turning-back");
+    };
+    ghost.addEventListener("animationend", settle);
+    window.setTimeout(() => settle(), 1100);
+  }
+
+  if (state.view === "notebook") {
+    const last = state.book?.days.at(-1);
+    if (last) document.getElementById(`chapter-${last.day}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+}
+
 function renderChrome() {
   const llm = state.meta?.llm;
   const pill = $("#llm-pill");
@@ -158,22 +310,45 @@ function renderChrome() {
   paintKeyHint("#openai-hint", llm?.openai, "OpenAI");
   paintKeyHint("#google-hint", llm?.google, "Google");
 
+  const progress = $("#chrome-progress");
   const book = state.book;
-  if (!book || state.view === "start") {
-    $("#top-kicker").textContent = "Simulatore locale · quattro slot, un JSON, un capitolo";
+  if (!book || BARE_VIEWS.has(state.view) || state.view === "anagrafica" || state.view === "voce") {
+    progress.textContent = state.view === "voce" ? "La voce del libro" : state.view === "anagrafica" ? "Il protagonista" : "";
+    return;
+  }
+  if (state.view === "today") {
+    progress.textContent = `${book.book_config.protagonist.name} · taccuino`;
     return;
   }
   const day = Math.min(book.book_config.current_day, book.book_config.total_days);
   const done = book.book_config.current_day > book.book_config.total_days;
-  $("#top-kicker").textContent = done
-    ? `${book.book_config.protagonist.name} · ciclo concluso · ${book.book_config.genre}`
-    : `Giorno ${day} di ${book.book_config.total_days} · ${book.book_config.genre}`;
+  progress.textContent = done
+    ? `${book.book_config.protagonist.name} · ${roman(book.book_config.total_days)} / ${roman(book.book_config.total_days)}`
+    : `${book.book_config.protagonist.name} · ${roman(day)} / ${roman(book.book_config.total_days)}`;
 }
 
-function renderStart() {
-  const meta = state.meta;
-  if (!meta) return;
-  const form = state.form;
+function cycleLinks() {
+  if (!state.book) return "";
+  return `
+    <nav class="cycle-links">
+      <button type="button" data-view="today">Oggi</button>
+      <button type="button" data-view="notebook">Capitoli sigillati</button>
+      <button type="button" data-view="volume">Volume</button>
+    </nav>`;
+}
+
+function renderCover() {
+  return `
+    <section class="page cover" id="cover-page">
+      <div class="cover-inner">
+        <h1>Storyhunter</h1>
+        <p class="kicker">Il biografo invisibile</p>
+        <p class="cover-hint">Clicca ovunque per iniziare</p>
+      </div>
+    </section>`;
+}
+
+function renderSoglia() {
   const shelf = state.books
     .map(
       (book) => `
@@ -188,64 +363,103 @@ function renderStart() {
       </div>`
     )
     .join("");
+  return `
+    <section class="page soglia">
+      <div class="soglia-inner">
+        <p class="eyebrow">Il patto</p>
+        <h1>Ogni giorno un capitolo sigillato.</h1>
+        <p class="pact">La routine diventa prosa. Tu componi la giornata; il narratore la scrive e la chiude. Il romanzo si apre alla fine del ciclo.</p>
+        <button type="button" class="solid" id="new-cycle">Apri un nuovo taccuino</button>
+        ${state.books.length ? `<div class="shelf"><p class="eyebrow">Taccuini aperti</p>${shelf}</div>` : ""}
+      </div>
+    </section>`;
+}
 
-  $("#start").innerHTML = `
-    <section class="manifesto">
-      <p class="eyebrow">Localhost</p>
-      <h1>La giornata diventa un capitolo.</h1>
-      <p class="lede">Qui i sensori sono leve. Componi la giornata in quattro fasce, il Daily Merger la cuce in un solo JSON, il modello scelto scrive il capitolo e aggiorna la memoria del romanzo.</p>
-      ${
-        state.books.length
-          ? `<div class="shelf"><p class="eyebrow">Cicli aperti</p>${shelf}</div>`
-          : ""
-      }
-      ${
-        state.book
-          ? `<button type="button" class="ghost" id="back-to-book">Torna al ciclo di ${esc(state.book.book_config.protagonist.name)}</button>`
-          : ""
-      }
-    </section>
-    <section class="panel" id="start-form">
-      <p class="eyebrow">Onboarding rapido</p>
-      <h2>Apri un ciclo</h2>
-      <div class="preset-row">
-        ${meta.profiles
-          .map((profile) => `<button type="button" class="choice" data-profile="${esc(profile.id)}">${esc(profile.label)}</button>`)
-          .join("")}
-      </div>
-      <div class="grid-3">
+function renderAnagrafica() {
+  const form = state.form;
+  return `
+    <section class="page">
+      <article class="paper" id="anagrafica-form">
+        <p class="eyebrow">Chi sei</p>
+        <h2>Il protagonista</h2>
+        <p class="lede">Nome, corpo anagrafico, e quanto deve durare questo romanzo.</p>
         <label>Nome <input name="name" value="${esc(form.name)}" maxlength="40" placeholder="Il nome nel romanzo"></label>
-        <label>Età <input name="age" type="number" min="16" max="99" value="${esc(form.age)}"></label>
-        <label>Giorni del ciclo <input name="total_days" type="range" min="3" max="7" value="${esc(form.total_days)}"> <output id="days-out">${form.total_days} giorni</output></label>
-      </div>
-      <p class="eyebrow">Genere anagrafico</p>
-      <div class="choice-row">
-        ${meta.genders
-          .map(
-            (gender) =>
-              `<button type="button" class="choice ${form.gender === gender.id ? "is-on" : ""}" data-gender="${gender.id}" aria-pressed="${form.gender === gender.id}">${esc(gender.label)}</button>`
-          )
-          .join("")}
-      </div>
-      <p class="eyebrow">Genere letterario</p>
-      <div class="choice-row">
-        ${meta.genres
-          .map(
-            (genre) =>
-              `<button type="button" class="choice ${form.genre === genre.id ? "is-on" : ""}" data-genre="${esc(genre.id)}" aria-pressed="${form.genre === genre.id}"><strong>${esc(genre.short)}</strong><small>${esc(genre.blurb)}</small></button>`
-          )
-          .join("")}
-      </div>
-      <div class="questions">
-        ${meta.questions.map((question) => renderQuestion(question)).join("")}
-      </div>
-      <div class="trait-line" id="trait-line"></div>
-      <div class="actions" style="margin-top: 1rem">
-        <button type="button" class="solid" id="create-book">Apri il ciclo</button>
-      </div>
-    </section>
-  `;
-  renderTraitLine();
+        <div class="grid-2" style="margin-top: 0.9rem">
+          <div class="age-field">
+            <label for="age-input">Età</label>
+            <div class="age-stepper">
+              <button type="button" class="age-nudge is-up" data-age-step="1" aria-label="Aumenta l'età"></button>
+              <input id="age-input" name="age" type="number" min="16" max="99" inputmode="numeric" value="${esc(form.age)}">
+              <button type="button" class="age-nudge is-down" data-age-step="-1" aria-label="Diminuisci l'età"></button>
+            </div>
+          </div>
+          <div>
+            <p class="quiet" style="margin: 0 0 0.4rem">Genere anagrafico</p>
+            <div class="choice-row">
+              ${state.meta.genders
+                .map(
+                  (gender) =>
+                    `<button type="button" class="choice ${form.gender === gender.id ? "is-on" : ""}" data-gender="${gender.id}" aria-pressed="${form.gender === gender.id}">${esc(gender.label)}</button>`
+                )
+                .join("")}
+            </div>
+          </div>
+        </div>
+        <div class="block">
+          <p class="block-title">Quanto dura</p>
+          <label class="days-field">Giorni del ciclo
+            <span class="days-slider" id="days-slider">
+              <input name="total_days" type="hidden" value="${esc(form.total_days)}">
+              <span class="days-track" aria-hidden="true"></span>
+              <span class="days-thumb" aria-hidden="true"></span>
+              <output id="days-out">${form.total_days} giorni</output>
+            </span>
+          </label>
+        </div>
+        <div class="page-nav">
+          <button type="button" class="ghost" data-back="soglia">Indietro</button>
+          <button type="button" class="solid" id="to-voce">Continua</button>
+        </div>
+      </article>
+    </section>`;
+}
+
+function renderVoce() {
+  const form = state.form;
+  const ready = voiceReady();
+  return `
+    <section class="page">
+      <article class="paper" id="voce-form">
+        <p class="eyebrow">La voce</p>
+        <h2>Come verrà raccontato</h2>
+        <p class="lede">Prima la lente letteraria, poi cinque domande. Scorri fino in fondo.</p>
+        <div class="genre-row">
+          ${state.meta.genres
+            .map(
+              (genre) =>
+                `<button type="button" class="choice ${form.genre === genre.id ? "is-on" : ""}" data-genre="${esc(genre.id)}" aria-pressed="${form.genre === genre.id}"><strong>${esc(genre.short)}</strong><small>${esc(genre.blurb)}</small></button>`
+            )
+            .join("")}
+        </div>
+        ${
+          form.genre
+            ? `<p class="quiet">Lente scelta: ${esc(state.meta.genres.find((item) => item.id === form.genre)?.short || form.genre)}</p>`
+            : ""
+        }
+        <div class="preset-row">
+          ${state.meta.profiles
+            .map((profile) => `<button type="button" class="choice" data-profile="${esc(profile.id)}">${esc(profile.label)}</button>`)
+            .join("")}
+        </div>
+        <div class="questions">
+          ${state.meta.questions.map((question) => renderQuestion(question)).join("")}
+        </div>
+        <div class="sticky-bar">
+          <button type="button" class="ghost" data-back="anagrafica">Indietro</button>
+          <button type="button" class="solid" id="to-conferma" ${ready ? "" : "disabled"}>Continua</button>
+        </div>
+      </article>
+    </section>`;
 }
 
 function renderQuestion(question) {
@@ -258,87 +472,43 @@ function renderQuestion(question) {
         ${question.options
           .map(
             (option) => `
-            <button type="button" class="choice ${selected === option.id ? "is-on" : ""}" data-answer="${question.id}:${option.id}" aria-pressed="${selected === option.id}">
-              <strong>${option.id}</strong>
-              <small>${esc(option.label)}</small>
+            <button type="button" class="choice answer ${selected === option.id ? "is-on" : ""}" data-answer="${question.id}:${option.id}" aria-pressed="${selected === option.id}">
+              <span class="answer-mark">${option.id}</span>
+              <span class="answer-copy">${esc(option.label)}</span>
             </button>`
           )
           .join("")}
       </div>
-    </fieldset>
-  `;
+    </fieldset>`;
 }
 
-function renderTraitLine() {
-  const host = $("#trait-line");
-  if (!host || !state.meta) return;
-  const parts = state.meta.questions.map((question) => {
-    const option = question.options.find((item) => item.id === state.form.answers[question.id]);
-    return `<span>${esc(option ? option.value : "—")}</span>`;
-  });
-  host.innerHTML = `<p class="quiet">Voce che uscirà dal questionario: ${parts.join(" · ")}</p>`;
-}
-
-function renderRail() {
-  const book = state.book;
-  if (!book) {
-    $("#rail").innerHTML = "";
-    return;
-  }
-  const protagonist = book.book_config.protagonist;
-  const home = book.story_state?.established_locations?.loc_home || "";
-  const days = [];
-  for (let day = 1; day <= book.book_config.total_days; day += 1) {
-    const entry = book.days.find((item) => item.day === day);
-    const current = day === book.book_config.current_day;
-    const status = entry ? (entry.chapter.sealed ? "sigillato" : "aperto") : current ? "in corso" : "in attesa";
-    days.push(`
-      <button type="button" class="day-dot ${entry ? "is-written" : ""} ${current ? "is-now" : ""}" data-goto="${day}">
-        <span>${roman(day)}</span>
-        <small>${status}</small>
-      </button>`);
-  }
-  const views = [
-    ["studio", "Studio della giornata"],
-    ["notebook", "Taccuino del narratore"],
-    ["memory", "Memoria narrativa"],
-    ["volume", "Volume"],
-  ];
-  $("#rail").innerHTML = `
-    <div class="who">
-      <p class="eyebrow">${esc(book.book_config.genre)}</p>
-      <p class="name">${esc(protagonist.name)}</p>
-      <p class="quiet">${esc(protagonist.age)} anni · ${esc(home)}</p>
-      <p class="quiet">${esc(protagonist.metaphor_domain)}</p>
-    </div>
-    <nav class="day-list">${days.join("")}</nav>
-    <nav>
-      ${views
-        .map(
-          ([id, label]) =>
-            `<button type="button" class="nav-btn ${state.view === id ? "is-current" : ""}" data-view="${id}">${label}</button>`
-        )
-        .join("")}
-      <button type="button" class="nav-btn" id="new-cycle">Nuovo ciclo</button>
-    </nav>
-  `;
-}
-
-function showView(view) {
-  state.view = view;
-  $("#start").hidden = view !== "start";
-  $("#workspace").hidden = view === "start";
-  for (const name of ["studio", "notebook", "memory", "volume"]) {
-    $(`#${name}`).hidden = view !== name;
-  }
-  renderChrome();
-  if (view === "start") renderStart();
-  if (!state.book || view === "start") return;
-  renderRail();
-  if (view === "studio") syncStudio();
-  if (view === "notebook") renderNotebook();
-  if (view === "memory") renderMemory();
-  if (view === "volume") renderVolume();
+function renderConferma() {
+  const form = state.form;
+  const domain = selectedTrait("q1")?.value || "";
+  const alias = homeAliasPreview(form.genre, domain);
+  const traits = state.meta.questions
+    .map((question) => {
+      const option = question.options.find((item) => item.id === form.answers[question.id]);
+      return `<li>${esc(option ? option.value : "—")}</li>`;
+    })
+    .join("");
+  const genre = state.meta.genres.find((item) => item.id === form.genre);
+  return `
+    <section class="page conferma">
+      <div class="conferma-inner">
+        <p class="eyebrow">La casa ha un nome</p>
+        <p class="home-alias">${esc(alias)}</p>
+        <ul class="echo">
+          <li>${esc(form.name)}, ${esc(form.age)} anni</li>
+          <li>${esc(genre?.short || form.genre)} · ${form.total_days} giorni</li>
+        </ul>
+        <ul class="echo">${traits}</ul>
+        <div class="page-nav" style="justify-content: center">
+          <button type="button" class="ghost" data-back="voce">Indietro</button>
+          <button type="button" class="solid" id="create-book">Apri il taccuino</button>
+        </div>
+      </div>
+    </section>`;
 }
 
 function prepareDay() {
@@ -353,7 +523,8 @@ function prepareDay() {
   }
   state.payload = null;
   state.payloadText = "";
-  state.activeSlot = 1;
+  state.notesText = state.slots.map((slot) => slot.notes_text).filter(Boolean).join("\n");
+  state.activeSlot = 0;
 }
 
 function hydrateSlots(list) {
@@ -398,130 +569,89 @@ function blankPlace(slotId) {
 }
 
 function syncStudio() {
+  if (!state.book) return;
   const key = `${state.book.id}:${state.book.book_config.current_day}`;
   if (state.mountedKey !== key) {
     prepareDay();
-    mountStudio();
     state.mountedKey = key;
   }
 }
 
-function mountStudio() {
-  const book = state.book;
-  const closed = book.book_config.current_day > book.book_config.total_days;
-  if (closed) {
-    $("#studio").innerHTML = `
-      <section class="panel">
+function closedBookMarkup() {
+  return `
+    <section class="page">
+      <article class="paper">
         <p class="eyebrow">Ciclo concluso</p>
         <h2>I giorni di questo romanzo sono stati scritti.</h2>
         <p class="lede">Puoi rileggere il taccuino, controllare la memoria, oppure comporre il volume.</p>
         <button type="button" class="solid" data-view="volume">Vai al volume</button>
-      </section>`;
-    return;
-  }
+        ${cycleLinks()}
+      </article>
+    </section>`;
+}
 
+function renderToday() {
+  const book = state.book;
+  if (!book) return "";
+  if (book.book_config.current_day > book.book_config.total_days) return closedBookMarkup();
   const day = book.book_config.current_day;
-  $("#studio").innerHTML = `
-    <section>
-      <p class="eyebrow">Giorno ${day} di ${book.book_config.total_days}</p>
-      <h2 style="font-family: var(--serif); font-weight: 560; letter-spacing: -0.03em; margin-top: 0">Studio della giornata</h2>
-      <p class="lede">Il modello non legge questi quattro moduli. Legge soltanto il JSON unico, dopo il Daily Merger.</p>
-      <div class="preset-row">
-        ${state.meta.presets
-          .map(
-            (preset) =>
-              `<button type="button" class="choice" data-preset="${esc(preset.id)}" title="${esc(preset.description)}"><strong>${esc(preset.name)}</strong><small>${esc(preset.description)}</small></button>`
-          )
-          .join("")}
-      </div>
-      <label>Data della giornata simulata <input id="day-date" type="date" value="${esc(state.date)}"></label>
-      <div class="tabs" id="slot-tabs" role="tablist"></div>
-      <div class="panel" id="slot-form"></div>
-      <div class="actions" style="margin: 0.9rem 0">
-        <button type="button" class="ghost" id="merge">Esegui il Daily Merger</button>
-        <button type="button" class="solid" id="simulate">Simula questo giorno</button>
-      </div>
-      <div class="panel">
-        <p class="eyebrow">JSON unico</p>
-        <div id="merge-summary"></div>
-        <textarea id="payload-json" class="json" spellcheck="false" placeholder="Il merger scrive qui il DailyUnifiedPayload. Puoi anche incollarlo."></textarea>
-        <label class="check" style="margin-top: 0.6rem">
-          <input id="raw-json" type="checkbox" ${state.raw ? "checked" : ""}>
-          Invia il JSON così com'è, senza riallineare profilo e memoria del ciclo
+  return `
+    <section class="page">
+      <article class="paper" id="taccuino-attivo">
+        <p class="eyebrow">Taccuino attivo · giorno ${roman(day)} di ${roman(book.book_config.total_days)}</p>
+        <h2>Scrivi, se serve.</h2>
+        <p class="lede">Il biografo guarda già il resto da solo. Qui restano solo gli appunti che vuoi lasciare. Un rigo per volta; se c'è l'ora, mettila all'inizio.</p>
+        <label class="taccuino-field">Appunti
+          <textarea id="day-notes" spellcheck="true" placeholder="13:40 Una frase, se vuoi.">${esc(state.notesText)}</textarea>
         </label>
-        <div class="actions" style="margin-top: 0.7rem">
-          <button type="button" class="ghost" id="from-json">Genera dal JSON</button>
-          <button type="button" class="ghost" id="load-sample">Carica l'esempio delle specifiche</button>
+        <div class="page-nav">
+          <button type="button" class="ghost" data-view="notebook">Capitoli sigillati</button>
+          <button type="button" class="solid" id="end-day">Concludi Giornata</button>
         </div>
-      </div>
-    </section>
-    <datalist id="weather-list">
-      ${state.meta.weathers.map((weather) => `<option value="${esc(weather)}"></option>`).join("")}
-    </datalist>
-  `;
-  $("#payload-json").value = state.payloadText;
-  renderTabs();
-  renderSlotForm();
-  renderSummary(state.payload);
+        ${cycleLinks()}
+      </article>
+    </section>`;
 }
 
-function renderTabs() {
-  const host = $("#slot-tabs");
-  if (!host) return;
-  host.innerHTML = state.slots
-    .map((slot, index) => {
-      const def = state.meta.slots[index];
-      return `
-        <button type="button" class="tab ${slot.included ? "" : "is-off"}" role="tab" data-slot="${index}" aria-selected="${index === state.activeSlot}">
-          <span>${esc(def.label)}</span>
-          <small>${esc(def.range)}</small>
-          <em data-tab-meta="${index}"></em>
-        </button>`;
-    })
-    .join("");
-  updateTabLabels();
-}
-
-function updateTabLabels() {
-  state.slots.forEach((slot, index) => {
-    const meta = document.querySelector(`[data-tab-meta="${index}"]`);
-    const tab = document.querySelector(`[data-slot="${index}"]`);
-    if (!meta || !tab) return;
-    const places =
-      slot.places.length === 1 ? "1 tappa" : slot.places.length ? `${slot.places.length} tappe` : "casa implicita";
-    const minutes = Number(slot.doomscrolling_minutes) + Number(slot.messaging_minutes);
-    meta.textContent = slot.included ? `${places} · ${minutes} min` : "escluso";
-    tab.classList.toggle("is-off", !slot.included);
-  });
-}
-
-function renderSlotForm() {
-  const host = $("#slot-form");
-  if (!host) return;
+function renderSlotPage() {
+  const book = state.book;
+  if (!book) return "";
+  if (book.book_config.current_day > book.book_config.total_days) return closedBookMarkup();
   const slot = state.slots[state.activeSlot];
   const def = state.meta.slots[state.activeSlot];
-  host.innerHTML = `
-    <p class="eyebrow">${esc(def.label)} · ${esc(def.range)}</p>
-    <label class="check"><input type="checkbox" data-field="included" ${slot.included ? "checked" : ""}> Includi questa fascia nel merge</label>
-    <div class="grid-2">
-      <label>Meteo <input data-field="weather" list="weather-list" value="${esc(slot.weather)}"></label>
-      <label>Risveglio in questa fascia <input data-field="wake_time" type="time" value="${esc(slot.wake_time)}"></label>
-    </div>
-    <div class="grid-2">
-      <label>Minuti di visione passiva <input data-field="doomscrolling_minutes" type="range" min="0" max="240" value="${esc(slot.doomscrolling_minutes)}"> <output>${slot.doomscrolling_minutes} min</output></label>
-      <label>Minuti di messaggistica <input data-field="messaging_minutes" type="range" min="0" max="240" value="${esc(slot.messaging_minutes)}"> <output>${slot.messaging_minutes} min</output></label>
-    </div>
-    <div class="place-head">
-      <p class="eyebrow" style="margin: 0">Tappe</p>
-      <button type="button" class="ghost" id="add-place">Aggiungi una tappa</button>
-    </div>
-    <div class="places" id="places"></div>
-    <p class="quiet" id="place-hint"></p>
-    <label>Appunti, un rigo per volta. Se c'è l'ora, mettila all'inizio: 13:40 testo
-      <textarea data-field="notes_text">${esc(slot.notes_text || "")}</textarea>
-    </label>
-  `;
-  renderPlaces();
+  const last = state.activeSlot === state.slots.length - 1;
+  return `
+    <section class="page">
+      <article class="paper" id="slot-form">
+        <p class="eyebrow">${esc(def.label)} · ${esc(def.range)}</p>
+        <h2>${esc(def.label)}</h2>
+        <label class="check"><input type="checkbox" data-field="included" ${slot.included ? "checked" : ""}> Includi questa fascia nel merge</label>
+        <div class="grid-2">
+          <label>Meteo <input data-field="weather" list="weather-list" value="${esc(slot.weather)}"></label>
+          <label>Risveglio in questa fascia <input data-field="wake_time" type="time" value="${esc(slot.wake_time)}"></label>
+        </div>
+        <div class="grid-2">
+          <label>Minuti di visione passiva <input data-field="doomscrolling_minutes" type="range" min="0" max="240" value="${esc(slot.doomscrolling_minutes)}"> <output>${slot.doomscrolling_minutes} min</output></label>
+          <label>Minuti di messaggistica <input data-field="messaging_minutes" type="range" min="0" max="240" value="${esc(slot.messaging_minutes)}"> <output>${slot.messaging_minutes} min</output></label>
+        </div>
+        <div class="place-head">
+          <p class="eyebrow" style="margin: 0">Tappe</p>
+          <button type="button" class="ghost" id="add-place">Aggiungi una tappa</button>
+        </div>
+        <div class="places" id="places"></div>
+        <p class="quiet" id="place-hint"></p>
+        <label>Appunti, un rigo per volta. Se c'è l'ora, mettila all'inizio: 13:40 testo
+          <textarea data-field="notes_text">${esc(slot.notes_text || "")}</textarea>
+        </label>
+        <div class="page-nav">
+          <button type="button" class="ghost" id="slot-back">${state.activeSlot === 0 ? "Oggi" : "Indietro"}</button>
+          <button type="button" class="solid" id="slot-next">${last ? "Cuci la giornata" : "Continua"}</button>
+        </div>
+        <datalist id="weather-list">
+          ${state.meta.weathers.map((weather) => `<option value="${esc(weather)}"></option>`).join("")}
+        </datalist>
+      </article>
+    </section>`;
 }
 
 function renderPlaces() {
@@ -586,6 +716,37 @@ function placeMarkup(place, index) {
     </article>`;
 }
 
+function renderMergePage() {
+  const book = state.book;
+  if (!book) return "";
+  if (book.book_config.current_day > book.book_config.total_days) return closedBookMarkup();
+  return `
+    <section class="page">
+      <article class="paper">
+        <p class="eyebrow">Giorno cucito</p>
+        <h2>Questa è la giornata che leggerà il narratore.</h2>
+        <div id="merge-summary"></div>
+        <div class="page-nav">
+          <button type="button" class="ghost" id="back-to-slots">Indietro</button>
+          <button type="button" class="solid" id="simulate">Scrivi il capitolo</button>
+        </div>
+        <details class="json-fold">
+          <summary>JSON unico</summary>
+          <textarea id="payload-json" class="json" spellcheck="false" placeholder="Il merger scrive qui il DailyUnifiedPayload. Puoi anche incollarlo."></textarea>
+          <label class="check" style="margin-top: 0.6rem">
+            <input id="raw-json" type="checkbox" ${state.raw ? "checked" : ""}>
+            Invia il JSON così com'è, senza riallineare profilo e memoria del ciclo
+          </label>
+          <div class="actions" style="margin-top: 0.7rem">
+            <button type="button" class="ghost" id="from-json">Genera dal JSON</button>
+            <button type="button" class="ghost" id="load-sample">Carica l'esempio delle specifiche</button>
+          </div>
+        </details>
+        ${cycleLinks()}
+      </article>
+    </section>`;
+}
+
 function slotsForApi() {
   return state.slots.map((slot) => ({
     ...slot,
@@ -602,7 +763,7 @@ function renderSummary(payload) {
   const host = $("#merge-summary");
   if (!host) return;
   if (!payload?.today_unified_telemetry) {
-    host.innerHTML = "";
+    host.innerHTML = `<p class="quiet">Il merger non ha ancora cucito gli slot. Torna indietro, oppure incolla un JSON.</p>`;
     return;
   }
   const today = payload.today_unified_telemetry;
@@ -642,20 +803,31 @@ function applyPayload(payload) {
 
 function renderNotebook() {
   const book = state.book;
+  if (!book) return "";
   const last = book.days.at(-1);
-  $("#notebook").innerHTML = `
-    <p class="eyebrow">Taccuino del narratore</p>
-    <h2 style="font-family: var(--serif); font-weight: 560;">Capitoli sigillati</h2>
-    <p class="lede">Ogni capitolo nasce chiuso. Aprilo subito, oppure lascialo così fino al volume finale.</p>
-    ${
-      book.days.length
-        ? ""
-        : `<section class="panel"><p>Nessun capitolo, per ora. Simula il primo giorno dallo studio.</p></section>`
-    }
-    <div class="chapter-list">
-      ${book.days.map((entry) => chapterCard(entry, last && entry.day === last.day)).join("")}
-    </div>
-  `;
+  const complete = book.days.length >= book.book_config.total_days;
+  return `
+    <section class="page">
+      <p class="eyebrow">Taccuino del narratore</p>
+      <h2>Capitoli sigillati</h2>
+      <p class="lede">Ogni capitolo nasce chiuso. Aprilo subito, oppure lascialo così fino al volume finale.</p>
+      ${
+        book.days.length
+          ? ""
+          : `<article class="paper"><p>Nessun capitolo, per ora. Chiudi la prima giornata dal taccuino.</p></article>`
+      }
+      <div class="chapter-list">
+        ${book.days.map((entry) => chapterCard(entry, last && entry.day === last.day)).join("")}
+      </div>
+      <div class="page-nav">
+        ${
+          complete
+            ? `<button type="button" class="solid" data-view="volume">Vai al volume</button>`
+            : `<button type="button" class="solid" data-view="today">Giorno successivo</button>`
+        }
+      </div>
+      ${cycleLinks()}
+    </section>`;
 }
 
 function chapterCard(entry, isLast) {
@@ -690,6 +862,7 @@ function chapterCard(entry, isLast) {
 
 function renderMemory() {
   const book = state.book;
+  if (!book) return "";
   const memory = book.story_state;
   const locations = Object.entries(memory.established_locations || {})
     .map(([key, alias]) => `<li><code>${esc(key)}</code> — ${esc(alias)}</li>`)
@@ -697,79 +870,86 @@ function renderMemory() {
   const list = (items) =>
     items?.length ? `<ul>${items.map((item) => `<li>${esc(item)}</li>`).join("")}</ul>` : `<p class="quiet">Niente, per ora.</p>`;
   const last = book.days.at(-1);
-  $("#memory").innerHTML = `
-    <p class="eyebrow">StoryState</p>
-    <h2 style="font-family: var(--serif); font-weight: 560;">Memoria del romanzo</h2>
-    <div class="memory-grid">
-      <section class="panel">
-        <p class="eyebrow">Chiusura dell'ultimo capitolo</p>
-        <p>${esc(CUTOFF[memory.last_chapter_ending_state] || memory.last_chapter_ending_state)}</p>
-        <p>${esc(memory.previous_chapter_summary)}</p>
-      </section>
-      <section class="panel">
-        <p class="eyebrow">Luoghi</p>
-        <ul>${locations}</ul>
-        <p class="eyebrow">Motivi</p>
-        ${list(memory.recurring_motifs)}
-        <p class="eyebrow">Tensioni aperte</p>
-        ${list(memory.unresolved_tensions)}
-      </section>
-      ${
-        last
-          ? `<section class="panel">
-              <p class="eyebrow">Ultimo JSON inviato</p>
-              <pre class="json-view">${esc(JSON.stringify(last.payload, null, 2))}</pre>
-              <details>
-                <summary>Prompt di sistema usato per il capitolo ${last.day}</summary>
-                <pre class="json-view">${esc(last.system_prompt || "Non archiviato.")}</pre>
-              </details>
-            </section>`
-          : ""
-      }
-    </div>
-  `;
+  return `
+    <section class="page">
+      <p class="eyebrow">StoryState</p>
+      <h2>Memoria del romanzo</h2>
+      <div class="memory-grid">
+        <article class="paper">
+          <p class="eyebrow">Chiusura dell'ultimo capitolo</p>
+          <p>${esc(CUTOFF[memory.last_chapter_ending_state] || memory.last_chapter_ending_state)}</p>
+          <p>${esc(memory.previous_chapter_summary)}</p>
+        </article>
+        <article class="paper">
+          <p class="eyebrow">Luoghi</p>
+          <ul>${locations}</ul>
+          <p class="eyebrow">Motivi</p>
+          ${list(memory.recurring_motifs)}
+          <p class="eyebrow">Tensioni aperte</p>
+          ${list(memory.unresolved_tensions)}
+        </article>
+        ${
+          last
+            ? `<article class="paper">
+                <p class="eyebrow">Ultimo JSON inviato</p>
+                <pre class="json-view">${esc(JSON.stringify(last.payload, null, 2))}</pre>
+                <details>
+                  <summary>Prompt di sistema usato per il capitolo ${last.day}</summary>
+                  <pre class="json-view">${esc(last.system_prompt || "Non archiviato.")}</pre>
+                </details>
+              </article>`
+            : ""
+        }
+      </div>
+      ${cycleLinks()}
+    </section>`;
 }
 
 function renderVolume() {
   const book = state.book;
+  if (!book) return "";
   const missing = book.book_config.total_days - book.days.length;
   if (missing > 0) {
-    $("#volume").innerHTML = `
-      <section class="panel">
-        <p class="eyebrow">Volume</p>
-        <h2>Mancano ancora ${missing} ${missing === 1 ? "giorno" : "giorni"}.</h2>
-        <p class="lede">Il romanzo si impagina quando ogni giorno del ciclo ha un capitolo.</p>
+    return `
+      <section class="page">
+        <article class="paper">
+          <p class="eyebrow">Volume</p>
+          <h2>Mancano ancora ${missing} ${missing === 1 ? "giorno" : "giorni"}.</h2>
+          <p class="lede">Il romanzo si impagina quando ogni giorno del ciclo ha un capitolo.</p>
+          ${cycleLinks()}
+        </article>
       </section>`;
-    return;
   }
 
   const closing = book.closing;
   const sealed = book.days.some((entry) => entry.chapter.sealed);
-  $("#volume").innerHTML = `
-    <div class="actions no-print" style="margin-bottom: 1rem">
-      <button type="button" class="solid" id="compose">${closing ? "Riscrivi frontespizio e quarta" : "Componi frontespizio e quarta"}</button>
-      ${sealed ? `<button type="button" class="ghost" id="open-all">Spezza i sigilli e mostra il romanzo</button>` : ""}
-      ${closing ? `<button type="button" class="ghost" id="print">Stampa o salva in PDF</button>` : ""}
-    </div>
-    ${
-      closing
-        ? `<article class="book">
-            <header class="cover">
-              <p class="eyebrow">${esc(book.book_config.genre)}</p>
-              <h2>${esc(closing.book_title)}</h2>
-              <p>${esc(closing.subtitle || "")}</p>
-              <p class="epigraph">${esc(closing.epigraph || "")}</p>
-              <p class="quiet">${esc(book.book_config.protagonist.name)}</p>
-            </header>
-            ${book.days.map((entry) => volumeChapter(entry)).join("")}
-            <section class="back-cover">
-              <p class="eyebrow">Quarta</p>
-              <div class="prose">${prose(closing.back_cover)}</div>
-            </section>
-          </article>`
-        : `<section class="panel"><p>I capitoli ci sono. Manca ancora il frontespizio: lo chiede ${esc(engineName())} all'arco intero.</p></section>`
-    }
-  `;
+  return `
+    <section class="page">
+      <div class="actions no-print" style="margin-bottom: 1rem">
+        <button type="button" class="solid" id="compose">${closing ? "Riscrivi frontespizio e quarta" : "Componi frontespizio e quarta"}</button>
+        ${sealed ? `<button type="button" class="ghost" id="open-all">Spezza i sigilli e mostra il romanzo</button>` : ""}
+        ${closing ? `<button type="button" class="ghost" id="print">Stampa o salva in PDF</button>` : ""}
+      </div>
+      ${
+        closing
+          ? `<article class="book">
+              <header class="cover-page">
+                <p class="eyebrow">${esc(book.book_config.genre)}</p>
+                <h2>${esc(closing.book_title)}</h2>
+                <p>${esc(closing.subtitle || "")}</p>
+                <p class="epigraph">${esc(closing.epigraph || "")}</p>
+                <p class="quiet">${esc(book.book_config.protagonist.name)}</p>
+              </header>
+              ${book.days.map((entry) => volumeChapter(entry)).join("")}
+              <section class="back-cover">
+                <p class="eyebrow">Quarta</p>
+                <div class="prose">${prose(closing.back_cover)}</div>
+              </section>
+            </article>`
+          : `<article class="paper"><p>I capitoli ci sono. Manca ancora il frontespizio: lo chiede ${esc(engineName())} all'arco intero.</p></article>`
+      }
+      ${cycleLinks()}
+    </section>`;
 }
 
 function volumeChapter(entry) {
@@ -798,17 +978,7 @@ function applyProfile(profile) {
     genre: profile.genre,
     answers: { ...profile.answers },
   };
-  renderStart();
-}
-
-function formProblems() {
-  const form = state.form;
-  if (!form.name.trim()) return "Manca il nome.";
-  if (!form.gender) return "Scegli il genere anagrafico.";
-  if (!form.genre) return "Scegli il genere letterario.";
-  const missing = state.meta.questions.find((question) => !form.answers[question.id]);
-  if (missing) return `Manca una risposta: ${missing.title}.`;
-  return "";
+  go("voce", "enter-forward");
 }
 
 async function createCycle() {
@@ -824,7 +994,7 @@ async function createCycle() {
     state.book = book;
     state.mountedKey = "";
     state.books = (await api("/api/books")).books;
-    showView("studio");
+    go("today", "enter-forward");
     setBanner("ok", `Ciclo di ${book.book_config.protagonist.name} aperto. La casa si chiama ${book.story_state.established_locations.loc_home}.`);
   } catch (error) {
     setBanner("error", error.message);
@@ -840,7 +1010,7 @@ async function openBook(id) {
     const { book } = await api(`/api/books/${id}`);
     state.book = book;
     state.mountedKey = "";
-    showView("studio");
+    go(book.book_config.current_day > book.book_config.total_days ? "volume" : "today", "enter-forward");
   } catch (error) {
     setBanner("error", error.message);
   }
@@ -857,10 +1027,38 @@ async function removeBook(id) {
       state.mountedKey = "";
     }
     state.books = (await api("/api/books")).books;
-    showView("start");
+    go("soglia", "enter-forward");
   } catch (error) {
     setBanner("error", error.message);
   }
+}
+
+function slotIndexForClock(time) {
+  const match = String(time || "").match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return 3;
+  const minutes = Number(match[1]) * 60 + Number(match[2]);
+  if (minutes < 6 * 60) return 0;
+  if (minutes < 12 * 60) return 1;
+  if (minutes < 18 * 60) return 2;
+  return 3;
+}
+
+function applyNotesToSlots(text) {
+  state.notesText = String(text || "");
+  for (const slot of state.slots) {
+    slot.notes = [];
+    slot.notes_text = "";
+  }
+  const lines = state.notesText.split(/\n/).map((line) => line.trim()).filter(Boolean);
+  const buckets = [[], [], [], []];
+  for (const line of lines) {
+    const timed = line.match(/^(\d{1,2}:\d{2})\s+(.+)$/);
+    const index = timed ? slotIndexForClock(timed[1]) : 3;
+    buckets[index].push(line);
+  }
+  state.slots.forEach((slot, index) => {
+    slot.notes_text = buckets[index].join("\n");
+  });
 }
 
 async function loadPreset(id) {
@@ -868,31 +1066,21 @@ async function loadPreset(id) {
     const preset = state.meta.presets.find((item) => item.id === id);
     const { slots } = await api(`/api/presets/${id}`);
     state.slots = hydrateSlots(slots);
-    renderTabs();
-    renderSlotForm();
+    state.notesText = state.slots.map((slot) => slot.notes_text).filter(Boolean).join("\n");
     setBanner("ok", preset ? preset.description : "Preset caricato.");
+    go("today", "enter-forward");
   } catch (error) {
     setBanner("error", error.message);
   }
 }
 
-async function mergeSlots() {
-  setBanner("", "");
-  setBusy("Il merger sta cucendo i quattro slot…");
-  try {
-    const { payload, book } = await api(`/api/books/${state.book.id}/merge`, {
-      method: "POST",
-      body: { date: state.date, slots: slotsForApi() },
-    });
-    if (book) state.book = book;
-    else state.book.draft = { day: state.book.book_config.current_day, date: state.date, slots: slotsForApi() };
-    applyPayload(payload);
-    setBanner("ok", "JSON unico pronto. Controlla le scene, poi simula il giorno oppure genera da questo testo.");
-  } catch (error) {
-    setBanner("error", error.message);
-  } finally {
-    setBusy("");
-  }
+async function concludeDay() {
+  if (state.busy) return;
+  applyNotesToSlots(state.notesText);
+  await generate(
+    { source: "slots", date: state.date, slots: slotsForApi() },
+    "Si chiude la giornata. Il narratore sta scrivendo il capitolo."
+  );
 }
 
 async function generate(body, busyText) {
@@ -909,8 +1097,8 @@ async function generate(body, busyText) {
       method: "POST",
       body,
       signal: typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
-      ? AbortSignal.timeout(150000)
-      : undefined,
+        ? AbortSignal.timeout(150000)
+        : undefined,
     });
     state.book = result.book;
     state.mountedKey = "";
@@ -921,9 +1109,7 @@ async function generate(body, busyText) {
         ? `Capitolo scritto. ${warnings.join(" ")}`
         : `Capitolo ${roman(result.book.days.at(-1).day)} sigillato nel taccuino. ${result.words} parole.`
     );
-    showView("notebook");
-    const card = document.getElementById(`chapter-${result.book.days.at(-1).day}`);
-    card?.scrollIntoView({ behavior: "smooth", block: "start" });
+    go("notebook", "enter-forward");
   } catch (error) {
     setBanner("error", error.message);
     if (/chiave API/i.test(error.message)) $("#settings").showModal();
@@ -1017,24 +1203,127 @@ function onField(event) {
       slot.notes_text = event.target.value;
       slot.notes = [];
     } else slot[field] = event.target.value;
-    updateTabLabels();
     return;
   }
 
-  if (!event.target.closest("#start-form")) return;
+  if (event.target.id === "day-notes") {
+    state.notesText = event.target.value;
+    return;
+  }
+
+  if (!event.target.closest("#anagrafica-form")) return;
   const el = event.target;
   if (el.name === "name") state.form.name = el.value;
   if (el.name === "age") state.form.age = Number(el.value);
-  if (el.name === "total_days") {
-    state.form.total_days = Number(el.value);
-    const output = $("#days-out");
-    if (output) output.textContent = `${el.value} giorni`;
-  }
+}
+
+function nudgeAge(button) {
+  const input = button.closest(".age-stepper")?.querySelector('input[name="age"]');
+  if (!input) return;
+  const min = Number(input.min) || 16;
+  const max = Number(input.max) || 99;
+  const next = Math.min(max, Math.max(min, Number(input.value || min) + Number(button.dataset.ageStep)));
+  input.value = String(next);
+  state.form.age = next;
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+const DAYS_MIN = 3;
+const DAYS_MAX = 7;
+
+function daysFromPointer(slider, clientX) {
+  const track = slider.querySelector(".days-track");
+  const box = (track || slider).getBoundingClientRect();
+  const pct = Math.min(1, Math.max(0, (clientX - box.left) / (box.width || 1)));
+  return DAYS_MIN + pct * (DAYS_MAX - DAYS_MIN);
+}
+
+function paintDays(value, { snap = false, glide = false } = {}) {
+  const slider = $("#days-slider");
+  const input = $('input[name="total_days"]');
+  const thumb = slider?.querySelector(".days-thumb");
+  const output = $("#days-out");
+  if (!slider || !input || !thumb || !output) return;
+  let next = Math.min(DAYS_MAX, Math.max(DAYS_MIN, Number(value)));
+  const nearest = Math.round(next);
+  if (snap) next = nearest;
+  const pct = ((next - DAYS_MIN) / (DAYS_MAX - DAYS_MIN)) * 100;
+  slider.classList.toggle("is-gliding", Boolean(glide));
+  thumb.style.left = `${pct}%`;
+  output.style.left = `${pct}%`;
+  output.style.transform = `translateX(-${pct}%)`;
+  output.textContent = `${nearest} giorni`;
+  input.value = String(nearest);
+  state.form.total_days = nearest;
+}
+
+function bindDaysSlider() {
+  const slider = $("#days-slider");
+  if (!slider) return;
+  paintDays(state.form.total_days, { snap: true });
+  if (slider.dataset.bound) return;
+  slider.dataset.bound = "true";
+  let stuck = null;
+  let dragging = false;
+  const follow = (event) => {
+    let next = daysFromPointer(slider, event.clientX);
+    const nearest = Math.round(next);
+    if (stuck !== null) {
+      if (Math.abs(next - stuck) < 0.22) next = stuck;
+      else stuck = null;
+    }
+    if (stuck === null && Math.abs(next - nearest) <= 0.12) {
+      next = nearest;
+      stuck = nearest;
+    }
+    paintDays(next);
+  };
+  slider.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    dragging = true;
+    stuck = null;
+    slider.setPointerCapture?.(event.pointerId);
+    follow(event);
+  });
+  slider.addEventListener("pointermove", (event) => {
+    if (!dragging) return;
+    follow(event);
+  });
+  const finish = (event) => {
+    if (!dragging) return;
+    dragging = false;
+    stuck = null;
+    paintDays(daysFromPointer(slider, event.clientX), { snap: true, glide: true });
+  };
+  slider.addEventListener("pointerup", finish);
+  slider.addEventListener("pointercancel", finish);
+}
+
+function placeDaysOutput() {
+  paintDays(state.form.total_days, { snap: true });
+}
+
+function markPressed(selector, value, attr) {
+  document.querySelectorAll(selector).forEach((button) => {
+    const on = button.getAttribute(attr) === value;
+    button.classList.toggle("is-on", on);
+    button.setAttribute("aria-pressed", on ? "true" : "false");
+  });
 }
 
 async function onClick(event) {
+  if (state.view === "cover") {
+    go("soglia", "enter-forward");
+    return;
+  }
+
+  const ageNudge = event.target.closest("[data-age-step]");
+  if (ageNudge) {
+    nudgeAge(ageNudge);
+    return;
+  }
+
   const preset = event.target.closest("[data-preset]");
-  const slotTab = event.target.closest("[data-slot]");
   const removePlace = event.target.closest("[data-remove-place]");
   const profile = event.target.closest("[data-profile]");
   const open = event.target.closest("[data-open]");
@@ -1043,15 +1332,11 @@ async function onClick(event) {
   const genre = event.target.closest("[data-genre]");
   const answer = event.target.closest("[data-answer]");
   const view = event.target.closest("[data-view]");
-  const goto = event.target.closest("[data-goto]");
+  const back = event.target.closest("[data-back]");
   const openChapter = event.target.closest("[data-open-chapter]");
 
-  if (event.target.closest("#brand") || event.target.closest("#new-cycle")) {
-    showView("start");
-    return;
-  }
-  if (event.target.closest("#back-to-book") && state.book) {
-    showView("studio");
+  if (event.target.closest("#brand")) {
+    go("soglia", "enter-back");
     return;
   }
   if (event.target.closest("#open-settings")) {
@@ -1071,8 +1356,7 @@ async function onClick(event) {
     return;
   }
   if (profile) {
-    const found = state.meta.profiles.find((item) => item.id === profile.dataset.profile);
-    if (found) applyProfile(found);
+    applyProfile(state.meta.profiles.find((item) => item.id === profile.dataset.profile));
     return;
   }
   if (open) {
@@ -1083,8 +1367,9 @@ async function onClick(event) {
     await removeBook(remove.dataset.delete);
     return;
   }
-  if (event.target.closest("#create-book")) {
-    await createCycle();
+  if (event.target.closest("#new-cycle")) {
+    state.form = blankForm();
+    go("anagrafica", "enter-forward");
     return;
   }
   if (gender) {
@@ -1094,7 +1379,10 @@ async function onClick(event) {
   }
   if (genre) {
     state.form.genre = genre.dataset.genre;
+    document.body.dataset.lens = lensOf(state.form.genre);
     markPressed("[data-genre]", state.form.genre, "data-genre");
+    const next = $("#to-conferma");
+    if (next) next.disabled = !voiceReady();
     return;
   }
   if (answer) {
@@ -1105,46 +1393,61 @@ async function onClick(event) {
       button.classList.toggle("is-on", on);
       button.setAttribute("aria-pressed", on ? "true" : "false");
     });
-    renderTraitLine();
+    const next = $("#to-conferma");
+    if (next) next.disabled = !voiceReady();
+    return;
+  }
+  if (event.target.closest("#to-voce")) {
+    const problem = anagraficaProblems();
+    if (problem) {
+      setBanner("error", problem);
+      return;
+    }
+    setBanner("", "");
+    go("voce", "enter-forward");
+    return;
+  }
+  if (event.target.closest("#to-conferma")) {
+    if (!voiceReady()) {
+      setBanner("error", formProblems());
+      return;
+    }
+    setBanner("", "");
+    go("conferma", "enter-forward");
+    return;
+  }
+  if (back) {
+    go(back.dataset.back, "enter-back");
+    return;
+  }
+  if (event.target.closest("#create-book")) {
+    await createCycle();
     return;
   }
   if (view) {
-    showView(view.dataset.view);
-    return;
-  }
-  if (goto) {
-    const day = Number(goto.dataset.goto);
-    const entry = state.book.days.find((item) => item.day === day);
-    if (entry) {
-      showView("notebook");
-      document.getElementById(`chapter-${day}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
-    } else if (day === state.book.book_config.current_day) showView("studio");
+    go(view.dataset.view, "enter-forward");
     return;
   }
   if (preset) {
     await loadPreset(preset.dataset.preset);
     return;
   }
-  if (slotTab) {
-    state.activeSlot = Number(slotTab.dataset.slot);
-    renderTabs();
-    renderSlotForm();
+  if (event.target.closest("#end-day")) {
+    await concludeDay();
+    return;
+  }
+  if (event.target.closest("#start-day") || event.target.closest("#slot-back") || event.target.closest("#slot-next") || event.target.closest("#back-to-slots")) {
+    go("today", "enter-forward");
     return;
   }
   if (event.target.closest("#add-place")) {
     state.slots[state.activeSlot].places.push(blankPlace(state.slots[state.activeSlot].id));
     renderPlaces();
-    updateTabLabels();
     return;
   }
   if (removePlace) {
     state.slots[state.activeSlot].places.splice(Number(removePlace.dataset.removePlace), 1);
     renderPlaces();
-    updateTabLabels();
-    return;
-  }
-  if (event.target.closest("#merge")) {
-    await mergeSlots();
     return;
   }
   if (event.target.closest("#simulate")) {
@@ -1210,7 +1513,7 @@ async function onClick(event) {
           : undefined,
       });
       state.book = result.book;
-      renderVolume();
+      go("volume", "enter-forward");
       setBanner("ok", `Il volume si intitola «${result.book.closing.book_title}».`);
     } catch (error) {
       setBanner("error", error.message);
@@ -1227,25 +1530,27 @@ async function mutateBook(path, view) {
   try {
     const result = await api(path, { method: "POST", body: {} });
     state.book = result.book;
-    showView(view);
+    go(view, "enter-forward");
   } catch (error) {
     setBanner("error", error.message);
   }
 }
 
-function markPressed(selector, value, attr) {
-  document.querySelectorAll(selector).forEach((button) => {
-    const on = button.getAttribute(attr) === value;
-    button.classList.toggle("is-on", on);
-    button.setAttribute("aria-pressed", on ? "true" : "false");
-  });
-}
-
 function bind() {
+  document.addEventListener("mousedown", (event) => {
+    if (event.target.closest?.("[data-age-step]")) event.preventDefault();
+  });
   document.addEventListener("click", (event) => {
+    const ageNudge = event.target.closest?.("[data-age-step]");
+    if (ageNudge) {
+      event.preventDefault();
+      nudgeAge(ageNudge);
+      return;
+    }
     onClick(event).catch((error) => setBanner("error", error.message));
   });
   document.addEventListener("input", onField);
+  window.addEventListener("resize", () => placeDaysOutput());
   document.addEventListener("change", (event) => {
     if (event.target.id === "day-date") state.date = event.target.value;
     if (event.target.id === "raw-json") state.raw = event.target.checked;
@@ -1277,8 +1582,7 @@ async function boot() {
     state.books = library.books;
     state.date = meta.today;
     fillModelSelect();
-    renderChrome();
-    renderStart();
+    go("cover", "enter-cover");
   } catch (error) {
     setBanner("error", error.message);
   }
