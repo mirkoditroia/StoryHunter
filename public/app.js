@@ -210,11 +210,19 @@ function formProblems() {
   return "";
 }
 
+const STUDIO_KEY = "storyhunter-osservatorio";
+
+function isStudioWindow() {
+  const path = (location.pathname || "/").replace(/\/+$/, "") || "/";
+  return path === "/studio" || new URLSearchParams(location.search).has("studio");
+}
+
 function go(view, motion = "enter-forward") {
-  if (view === "slot" || view === "merge") view = "today";
+  if (isStudioWindow()) view = "studio";
+  else if (view === "slot" || view === "merge") view = "today";
   state.view = view;
   state.motion = motion;
-  if (view === "today") syncStudio();
+  if (view === "today" || (view === "studio" && state.book)) syncStudio();
   render();
 }
 
@@ -257,6 +265,7 @@ function render() {
     voce: renderVoce,
     conferma: renderConferma,
     today: renderToday,
+    studio: renderStudio,
     slot: renderSlotPage,
     merge: renderMergePage,
     notebook: renderNotebook,
@@ -314,6 +323,10 @@ function renderChrome() {
   const book = state.book;
   if (!book || BARE_VIEWS.has(state.view) || state.view === "anagrafica" || state.view === "voce") {
     progress.textContent = state.view === "voce" ? "La voce del libro" : state.view === "anagrafica" ? "Il protagonista" : "";
+    return;
+  }
+  if (state.view === "studio") {
+    progress.textContent = "Osservatorio";
     return;
   }
   if (state.view === "today") {
@@ -525,6 +538,7 @@ function prepareDay() {
   state.payloadText = "";
   state.notesText = state.slots.map((slot) => slot.notes_text).filter(Boolean).join("\n");
   state.activeSlot = 0;
+  publishOsservatorio();
 }
 
 function hydrateSlots(list) {
@@ -611,6 +625,124 @@ function renderToday() {
         ${cycleLinks()}
       </article>
     </section>`;
+}
+
+function refreshStudioLive() {
+  const host = $("#osservatorio");
+  if (!host) return;
+  const next = readOsservatorio();
+  if (String(next?.at || "") === String(host.dataset.at || "")) return;
+  const page = host.closest(".page");
+  if (!page) return;
+  const wrap = document.createElement("div");
+  wrap.innerHTML = renderStudio();
+  const fresh = wrap.firstElementChild;
+  if (fresh) page.replaceWith(fresh);
+}
+
+function publishOsservatorio() {
+  if (!state.book || !state.slots.length) return;
+  applyNotesToSlots(state.notesText);
+  const snap = {
+    at: Date.now(),
+    book: {
+      id: state.book.id,
+      name: state.book.book_config.protagonist.name,
+      genre: state.book.book_config.genre,
+      day: state.book.book_config.current_day,
+      total: state.book.book_config.total_days,
+    },
+    date: state.date,
+    notesText: state.notesText,
+    slots: slotsForApi(),
+  };
+  try {
+    localStorage.setItem(STUDIO_KEY, JSON.stringify(snap));
+  } catch {
+    /* ignore quota */
+  }
+}
+
+function readOsservatorio() {
+  try {
+    const raw = localStorage.getItem(STUDIO_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function renderStudio() {
+  const live = readOsservatorio();
+  const slots = live?.slots || state.slots || [];
+  const defs = state.meta?.slots || [];
+  const book = live?.book;
+  const updated = live?.at ? new Date(live.at).toLocaleTimeString("it-IT") : "—";
+  return `
+    <section class="page osservatorio-page">
+      <article class="paper" id="osservatorio" data-at="${esc(live?.at || "")}">
+        <p class="eyebrow">Osservatorio</p>
+        <h2>Dati simulati della giornata</h2>
+        <p class="lede">Questa finestra non è il taccuino del lettore. Qui si vedono le quattro fasce che il merger riceve quando si chiude la giornata: meteo, sveglia, schermo, tappe, battito, appunti.</p>
+        ${
+          book
+            ? `<p class="quiet">${esc(book.name)} · ${esc(book.genre)} · giorno ${roman(book.day)} di ${roman(book.total)} · ${esc(live.date || "")} · aggiornato alle ${esc(updated)}</p>`
+            : `<p class="quiet">Apri il taccuino in un'altra finestra, oppure scegli un ciclo qui sotto. I dati arrivano in diretta mentre si scrive.</p>`
+        }
+        ${
+          state.books?.length
+            ? `<div class="preset-row studio-books">${state.books
+                .map(
+                  (item) =>
+                    `<button type="button" class="choice ${book?.id === item.id ? "is-on" : ""}" data-watch-book="${esc(item.id)}">${esc(item.name)} · ${esc(item.genre)}</button>`
+                )
+                .join("")}</div>`
+            : ""
+        }
+        <p class="quiet">Appunti del taccuino</p>
+        <pre class="json-view">${esc(live?.notesText || "—")}</pre>
+        <div class="studio-slots">
+          ${
+            slots.length
+              ? slots
+                  .map((slot, index) => studioSlotCard(slot, defs[index] || defs.find((item) => item.id === slot.id)))
+                  .join("")
+              : `<p class="quiet">Nessuno slot in memoria. Compila il taccuino attivo, poi torna qui.</p>`
+          }
+        </div>
+        <details class="json-fold">
+          <summary>JSON inviato al merger</summary>
+          <pre class="json-view">${esc(JSON.stringify(slots, null, 2))}</pre>
+        </details>
+      </article>
+    </section>`;
+}
+
+function studioSlotCard(slot, def) {
+  const label = def?.label || slot.id;
+  const range = def?.range || "";
+  const places = slot.places?.length
+    ? slot.places
+        .map(
+          (place) =>
+            `<li>${esc(place.kind)} ${esc(place.zone || "")} · ${esc(place.start)}–${esc(place.end)} · ${esc(place.movement)} · HR ${esc(place.hr_avg)}${place.hr_peak ? ` / picco ${esc(place.hr_peak)}` : ""} · stress ${esc(place.stress)}</li>`
+        )
+        .join("")
+    : "<li>Nessuna tappa: il merger assume casa per tutta la fascia.</li>";
+  return `
+    <article class="studio-slot">
+      <p class="eyebrow">${esc(label)} · ${esc(range)}</p>
+      <ul>
+        <li>Incluso nel merge: ${slot.included !== false ? "sì" : "no"}</li>
+        <li>Meteo: ${esc(slot.weather || "—")}</li>
+        <li>Risveglio: ${esc(slot.wake_time || "—")}</li>
+        <li>Visione passiva: ${esc(slot.doomscrolling_minutes || 0)} min</li>
+        <li>Messaggistica: ${esc(slot.messaging_minutes || 0)} min</li>
+        <li>Appunti: ${esc(slot.notes_text || "—")}</li>
+      </ul>
+      <p class="quiet">Tappe</p>
+      <ul>${places}</ul>
+    </article>`;
 }
 
 function renderSlotPage() {
@@ -995,6 +1127,7 @@ async function createCycle() {
     state.mountedKey = "";
     state.books = (await api("/api/books")).books;
     go("today", "enter-forward");
+    publishOsservatorio();
     setBanner("ok", `Ciclo di ${book.book_config.protagonist.name} aperto. La casa si chiama ${book.story_state.established_locations.loc_home}.`);
   } catch (error) {
     setBanner("error", error.message);
@@ -1010,7 +1143,15 @@ async function openBook(id) {
     const { book } = await api(`/api/books/${id}`);
     state.book = book;
     state.mountedKey = "";
-    go(book.book_config.current_day > book.book_config.total_days ? "volume" : "today", "enter-forward");
+    go(
+      isStudioWindow()
+        ? "studio"
+        : book.book_config.current_day > book.book_config.total_days
+          ? "volume"
+          : "today",
+      "enter-forward"
+    );
+    publishOsservatorio();
   } catch (error) {
     setBanner("error", error.message);
   }
@@ -1077,6 +1218,7 @@ async function loadPreset(id) {
 async function concludeDay() {
   if (state.busy) return;
   applyNotesToSlots(state.notesText);
+  publishOsservatorio();
   await generate(
     { source: "slots", date: state.date, slots: slotsForApi() },
     "Si chiude la giornata. Il narratore sta scrivendo il capitolo."
@@ -1208,6 +1350,7 @@ function onField(event) {
 
   if (event.target.id === "day-notes") {
     state.notesText = event.target.value;
+    publishOsservatorio();
     return;
   }
 
@@ -1336,7 +1479,13 @@ async function onClick(event) {
   const openChapter = event.target.closest("[data-open-chapter]");
 
   if (event.target.closest("#brand")) {
+    if (isStudioWindow()) return;
     go("soglia", "enter-back");
+    return;
+  }
+  const watch = event.target.closest("[data-watch-book]");
+  if (watch) {
+    await openBook(watch.dataset.watchBook);
     return;
   }
   if (event.target.closest("#open-settings")) {
@@ -1556,6 +1705,13 @@ function bind() {
     if (event.target.id === "raw-json") state.raw = event.target.checked;
     if (event.target.dataset?.placeField || event.target.dataset?.field) onField(event);
   });
+  window.addEventListener("storage", (event) => {
+    if (event.key !== STUDIO_KEY || state.view !== "studio") return;
+    refreshStudioLive();
+  });
+  window.setInterval(() => {
+    if (state.view === "studio") refreshStudioLive();
+  }, 900);
   document.addEventListener("input", (event) => {
     if (event.target.id === "payload-json") {
       state.payloadText = event.target.value;
@@ -1582,7 +1738,12 @@ async function boot() {
     state.books = library.books;
     state.date = meta.today;
     fillModelSelect();
-    go("cover", "enter-cover");
+    if (isStudioWindow()) {
+      if (location.pathname.replace(/\/+$/, "") !== "/studio") history.replaceState({}, "", "/studio");
+      go("studio", "none");
+    } else {
+      go("cover", "enter-cover");
+    }
   } catch (error) {
     setBanner("error", error.message);
   }
