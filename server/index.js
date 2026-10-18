@@ -18,6 +18,7 @@ import {
   ZONES,
 } from "./meta.js";
 import { PRESET_LIST, buildPreset } from "./presets.js";
+import { applySimulatedTelemetry, listScenarios } from "./scenarios.js";
 import { mergeDay } from "./merger.js";
 import { composeVolume, llmStatus, writeChapter } from "./narrator.js";
 import { samplePayload } from "./sample.js";
@@ -60,6 +61,7 @@ app.get("/api/meta", async (_req, res, next) => {
       questions: QUESTIONS,
       profiles: PROFILES,
       presets: PRESET_LIST,
+      scenarios: listScenarios(),
       slots: SLOT_DEFS,
       place_kinds: PLACE_KINDS,
       zones: ZONES,
@@ -131,8 +133,9 @@ app.post("/api/books/:id/merge", async (req, res, next) => {
     const book = await requireBook(req.params.id);
     const day = assertOpenDay(book);
     const date = validDate(req.body?.date) || dateForDay(book.started_on, day);
-    const payload = mergeDay({ book, day, date, slots: req.body?.slots });
-    book.draft = { day, date, slots: req.body?.slots };
+    const slots = applySimulatedTelemetry(req.body?.slots, { bookId: book.id, day });
+    const payload = mergeDay({ book, day, date, slots });
+    book.draft = { day, date, slots };
     await saveBook(book);
     res.json({ payload, draft_saved: true });
   } catch (error) {
@@ -175,7 +178,7 @@ app.post("/api/books/:id/generate", async (req, res, next) => {
         };
       }
     } else {
-      slots = req.body?.slots;
+      slots = applySimulatedTelemetry(req.body?.slots, { bookId: book.id, day });
       payload = mergeDay({ book, day, date, slots });
     }
 

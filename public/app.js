@@ -10,6 +10,8 @@ const state = {
   payload: null,
   payloadText: "",
   notesText: "",
+  scenarioId: "",
+  scenarioShift: 0,
   raw: false,
   mountedKey: "",
   busy: false,
@@ -236,7 +238,8 @@ function render() {
   stage.classList.remove("enter-forward", "enter-back", "enter-cover", "slot-next", "slot-prev", "is-turning", "is-turning-back");
   const previous = stage.querySelector(":scope > .page");
   const backward = state.motion === "enter-back" || state.motion === "slot-prev";
-  const turning = Boolean(previous) && state.motion !== "enter-cover" && !prefersReducedMotion();
+  const turning =
+    Boolean(previous) && state.motion !== "enter-cover" && state.motion !== "replace" && !prefersReducedMotion();
   const outgoing = turning ? previous.getBoundingClientRect() : null;
   const ghost = turning ? document.createElement("div") : null;
   const host = turning ? document.createElement("div") : null;
@@ -273,7 +276,7 @@ function render() {
     volume: renderVolume,
   }[state.view];
   const turnClass = backward ? "is-turning-back" : "is-turning";
-  stage.classList.add(ghost ? turnClass : state.motion);
+  if (state.motion !== "replace") stage.classList.add(ghost ? turnClass : state.motion);
   stage.innerHTML = html ? html() : "";
   if (state.view === "slot") renderPlaces();
   if (state.view === "anagrafica") requestAnimationFrame(() => bindDaysSlider());
@@ -524,21 +527,85 @@ function renderConferma() {
     </section>`;
 }
 
+function hashSeed(value) {
+  let hash = 2166136261;
+  for (const ch of String(value || "story")) {
+    hash ^= ch.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function scenarioIndex(bookId, day, shift, count) {
+  const total = count || 1;
+  const base = hashSeed(bookId) % total;
+  const delta = (Number(day) || 1) - 1 + (Number(shift) || 0);
+  return ((base + delta) % total + total) % total;
+}
+
+function telemetryBlank(slots) {
+  if (!Array.isArray(slots) || slots.length === 0) return true;
+  return slots.every((slot) => {
+    const places = Array.isArray(slot?.places) ? slot.places : [];
+    return (
+      places.length === 0 &&
+      !String(slot?.wake_time || "").trim() &&
+      !(Number(slot?.doomscrolling_minutes) > 0) &&
+      !(Number(slot?.messaging_minutes) > 0)
+    );
+  });
+}
+
+function notesFromSlotList(slots) {
+  return (slots || [])
+    .flatMap((slot) => {
+      const text = String(slot?.notes_text || "").trim();
+      if (text) return [text];
+      return (slot?.notes || [])
+        .map((note) => `${note.time ? `${note.time} ` : ""}${note.text || ""}`.trim())
+        .filter(Boolean);
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function currentScenario() {
+  const list = state.meta?.scenarios || [];
+  if (!list.length || !state.book) return null;
+  const day = state.book.book_config.current_day;
+  return list[scenarioIndex(state.book.id, day, state.scenarioShift || 0, list.length)] || null;
+}
+
+function assignScenario(notes = state.notesText) {
+  const scenario = currentScenario();
+  state.notesText = notes || "";
+  if (!scenario) {
+    state.scenarioId = "";
+    state.slots = hydrateSlots([]);
+  } else {
+    state.scenarioId = scenario.id;
+    state.slots = hydrateSlots(scenario.slots);
+  }
+  applyNotesToSlots(state.notesText);
+  publishOsservatorio();
+}
+
 function prepareDay() {
   const book = state.book;
   const day = book.book_config.current_day;
-  if (book.draft?.day === day && Array.isArray(book.draft.slots)) {
-    state.slots = hydrateSlots(book.draft.slots);
-    state.date = book.draft.date || addDays(book.started_on, day - 1);
-  } else {
-    state.slots = hydrateSlots([]);
-    state.date = addDays(book.started_on || state.meta.today, Math.max(day, 1) - 1);
-  }
+  const draft = book.draft?.day === day && Array.isArray(book.draft.slots) ? book.draft : null;
+  state.date = draft?.date || addDays(book.started_on || state.meta.today, Math.max(day, 1) - 1);
   state.payload = null;
   state.payloadText = "";
-  state.notesText = state.slots.map((slot) => slot.notes_text).filter(Boolean).join("\n");
   state.activeSlot = 0;
-  publishOsservatorio();
+  if (draft && !telemetryBlank(draft.slots)) {
+    state.slots = hydrateSlots(draft.slots);
+    state.scenarioId = draft.scenario_id || "";
+    state.notesText = notesFromSlotList(state.slots);
+    publishOsservatorio();
+    return;
+  }
+  assignScenario(draft ? notesFromSlotList(draft.slots) : "");
 }
 
 function hydrateSlots(list) {
@@ -586,9 +653,27 @@ function syncStudio() {
   if (!state.book) return;
   const key = `${state.book.id}:${state.book.book_config.current_day}`;
   if (state.mountedKey !== key) {
+    state.scenarioShift = 0;
     prepareDay();
     state.mountedKey = key;
   }
+}
+
+function scenarioSnapshot() {
+  const list = state.meta?.scenarios || [];
+  const scenario = list.find((item) => item.id === state.scenarioId);
+  if (!scenario) return null;
+  return { id: scenario.id, name: scenario.name, description: scenario.description };
+}
+
+function scenarioBar() {
+  const scenario = scenarioSnapshot();
+  if (!scenario) return "";
+  return `
+    <div class="scenario-bar">
+      <p class="quiet"><strong>${esc(scenario.name)}</strong> — ${esc(scenario.description)}</p>
+      <button type="button" class="ghost" id="next-scenario">Altra combinazione</button>
+    </div>`;
 }
 
 function closedBookMarkup() {
@@ -614,7 +699,8 @@ function renderToday() {
       <article class="paper" id="taccuino-attivo">
         <p class="eyebrow">Taccuino attivo · giorno ${roman(day)} di ${roman(book.book_config.total_days)}</p>
         <h2>Scrivi, se serve.</h2>
-        <p class="lede">Il biografo guarda già il resto da solo. Qui restano solo gli appunti che vuoi lasciare. Un rigo per volta; se c'è l'ora, mettila all'inizio.</p>
+        <p class="lede">Il biografo guarda già il resto da solo: meteo, sveglia, spostamenti e battito arrivano da una giornata simulata. Qui restano solo gli appunti. Un rigo per volta; se c'è l'ora, mettila all'inizio.</p>
+        ${scenarioBar()}
         <label class="taccuino-field">Appunti
           <textarea id="day-notes" spellcheck="true" placeholder="13:40 Una frase, se vuoi.">${esc(state.notesText)}</textarea>
         </label>
@@ -654,6 +740,7 @@ function publishOsservatorio() {
     },
     date: state.date,
     notesText: state.notesText,
+    scenario: scenarioSnapshot(),
     slots: slotsForApi(),
   };
   try {
@@ -683,7 +770,12 @@ function renderStudio() {
       <article class="paper" id="osservatorio" data-at="${esc(live?.at || "")}">
         <p class="eyebrow">Osservatorio</p>
         <h2>Dati simulati della giornata</h2>
-        <p class="lede">Questa finestra non è il taccuino del lettore. Qui si vedono le quattro fasce che il merger riceve quando si chiude la giornata: meteo, sveglia, schermo, tappe, battito, appunti.</p>
+        <p class="lede">Questa finestra non è il taccuino del lettore. Qui si vedono le quattro fasce che il merger riceve quando si chiude la giornata: meteo, sveglia, schermo, tappe, battito, appunti. I numeri imitano telefono e meteo.</p>
+        ${
+          live?.scenario
+            ? `<p class="quiet">Combinazione: ${esc(live.scenario.name)}. ${esc(live.scenario.description)}</p>`
+            : ""
+        }
         ${
           book
             ? `<p class="quiet">${esc(book.name)} · ${esc(book.genre)} · giorno ${roman(book.day)} di ${roman(book.total)} · ${esc(live.date || "")} · aggiornato alle ${esc(updated)}</p>`
@@ -725,7 +817,7 @@ function studioSlotCard(slot, def) {
     ? slot.places
         .map(
           (place) =>
-            `<li>${esc(place.kind)} ${esc(place.zone || "")} · ${esc(place.start)}–${esc(place.end)} · ${esc(place.movement)} · HR ${esc(place.hr_avg)}${place.hr_peak ? ` / picco ${esc(place.hr_peak)}` : ""} · stress ${esc(place.stress)}</li>`
+            `<li>${esc(place.kind)} ${esc(place.zone || "")} · ${esc(place.start)}–${esc(place.end)} · ${esc(place.movement)} · HR ${esc(place.hr_avg)}${place.hr_peak ? ` / picco ${esc(place.hr_peak)}${place.hr_peak_time ? ` alle ${esc(place.hr_peak_time)}` : ""}` : ""} · stress ${esc(place.stress)}${place.spo2 ? ` · SpO2 ${esc(place.spo2)}%` : ""}</li>`
         )
         .join("")
     : "<li>Nessuna tappa: il merger assume casa per tutta la fascia.</li>";
@@ -1579,6 +1671,13 @@ async function onClick(event) {
   }
   if (preset) {
     await loadPreset(preset.dataset.preset);
+    return;
+  }
+  if (event.target.closest("#next-scenario")) {
+    state.notesText = $("#day-notes")?.value ?? state.notesText;
+    state.scenarioShift = (Number(state.scenarioShift) || 0) + 1;
+    assignScenario(state.notesText);
+    go("today", "replace");
     return;
   }
   if (event.target.closest("#end-day")) {
