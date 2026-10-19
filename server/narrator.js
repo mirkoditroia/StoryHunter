@@ -1,9 +1,10 @@
 import { DEFAULT_MODEL, providerOf, resolveModel } from "./meta.js";
 import { HttpError } from "./errors.js";
-import { findBanned } from "./transfiguration.js";
+import { findBanned, findMeasures } from "./transfiguration.js";
 import {
   buildClosingPrompt,
   buildExpansionPrompt,
+  buildMeasurePrompt,
   buildRepairPrompt,
   buildSystemPrompt,
   buildUserPrompt,
@@ -89,6 +90,28 @@ export async function writeChapter(payload) {
   if (stillBanned.length) {
     warnings.push(`Restano parole da non pubblicare: ${stillBanned.join(", ")}.`);
   }
+
+  const measures = measuresInDraft(draft);
+  if (measures.length) {
+    try {
+      const repaired = await askJson(
+        [
+          { role: "system", content: system },
+          { role: "user", content: buildMeasurePrompt(payload, draft, measures) },
+        ],
+        0.4,
+        7000
+      );
+      draft = normalizeDraft(repaired, payload);
+    } catch (error) {
+      warnings.push(`Trasfigurazione delle misure non riuscita: ${error.message}`);
+    }
+  }
+
+  const stillMeasured = measuresInDraft(draft);
+  if (stillMeasured.length) {
+    warnings.push(`Restano misure da non leggere come bollettino: ${stillMeasured.join(", ")}.`);
+  }
   if (countWords(draft.chapter_text) < 800) {
     warnings.push(`Il capitolo è di ${countWords(draft.chapter_text)} parole, sotto le 800 richieste.`);
   }
@@ -96,6 +119,7 @@ export async function writeChapter(payload) {
   const status = await llmStatus();
   return {
     chapter_title: draft.chapter_title,
+    chapter_subtitle: draft.chapter_subtitle,
     chapter_text: draft.chapter_text,
     state: forceEnding(draft.updated_story_state, payload),
     words: countWords(draft.chapter_text),
@@ -318,6 +342,7 @@ function normalizeDraft(raw, payload) {
   const previous = payload.story_state_memory || {};
   return {
     chapter_title: clean(source.chapter_title, 140) || `Capitolo ${payload.book_config.current_day}`,
+    chapter_subtitle: clean(source.chapter_subtitle, 180),
     chapter_text: text,
     updated_story_state: sanitizeState(source.updated_story_state, previous),
   };
@@ -356,16 +381,25 @@ function forceEnding(state, payload) {
   return state;
 }
 
+function measuresInDraft(draft) {
+  return findMeasures(draftBlob(draft));
+}
+
 function bannedInDraft(draft) {
+  return findBanned(draftBlob(draft));
+}
+
+function draftBlob(draft) {
   const blob = [
     draft.chapter_title,
+    draft.chapter_subtitle,
     draft.chapter_text,
     draft.updated_story_state.previous_chapter_summary,
     ...(draft.updated_story_state.recurring_motifs || []),
     ...(draft.updated_story_state.unresolved_tensions || []),
     ...Object.values(draft.updated_story_state.established_locations || {}),
   ].join("\n");
-  return findBanned(blob);
+  return blob;
 }
 
 function stringList(value) {

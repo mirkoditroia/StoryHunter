@@ -85,6 +85,11 @@ function prose(text) {
     .join("");
 }
 
+function subtitleLine(subtitle) {
+  const text = String(subtitle || "").trim();
+  return text ? `<p class="chapter-subtitle">${esc(text)}</p>` : "";
+}
+
 async function api(path, options = {}) {
   let response;
   try {
@@ -1074,6 +1079,7 @@ function chapterCard(entry, isLast) {
     <article class="sheet" id="chapter-${entry.day}">
       <p class="quiet">Capitolo ${roman(entry.day)} · ${esc(entry.date)} · ${chapter.words || "—"} parole · ${esc(chapter.model || "")}</p>
       <h3>${esc(chapter.chapter_title)}</h3>
+      ${subtitleLine(chapter.chapter_subtitle)}
       <div class="prose">${prose(chapter.chapter_text)}</div>
       ${warnings ? `<ul class="quiet">${warnings}</ul>` : ""}
       ${
@@ -1189,6 +1195,7 @@ function volumeChapter(entry) {
     <section style="margin-top: 1.6rem">
       <p class="quiet">Capitolo ${roman(entry.day)}</p>
       <h3>${esc(entry.chapter.chapter_title)}</h3>
+      ${subtitleLine(entry.chapter.chapter_subtitle)}
       <div class="prose">${prose(entry.chapter.chapter_text)}</div>
     </section>`;
 }

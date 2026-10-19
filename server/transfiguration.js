@@ -48,6 +48,17 @@ export function containsBanned(text) {
   return BANNED.test(String(text || ""));
 }
 
+export function findMeasures(text) {
+  const found = new Set();
+  const source = String(text || "");
+  const measure =
+    /\d+(?:[.,]\d+)?\s*(?:°|º|%)|[°%]|centigradi|\b(?:gradi|percento|percentuale|bpm|pulsazioni)\b|battiti al minuto|saturazione dell['’]ossigeno|\bkm\/h\b/gi;
+  for (const match of source.matchAll(measure)) {
+    found.add(match[0].toLowerCase());
+  }
+  return [...found].slice(0, 8);
+}
+
 export function findBanned(text) {
   const found = new Set();
   const source = String(text || "");

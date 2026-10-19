@@ -195,6 +195,7 @@ app.post("/api/books/:id/generate", async (req, res, next) => {
       chapter: {
         chapter_number: day,
         chapter_title: written.chapter_title,
+        chapter_subtitle: written.chapter_subtitle,
         chapter_text: written.chapter_text,
         sealed: true,
         opened_at: null,
@@ -340,6 +341,7 @@ async function regenerateLast(book) {
     chapter: {
       chapter_number: last.day,
       chapter_title: written.chapter_title,
+      chapter_subtitle: written.chapter_subtitle,
       chapter_text: written.chapter_text,
       sealed: true,
       opened_at: null,
