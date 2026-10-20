@@ -18,7 +18,7 @@ test("il drammaturgo riceve materiale scelto, arco e regole del copione", () => 
   assert.match(system, /Filo conduttore: lo fondi oggi, da questo seme/);
   assert.match(system, /Materiale drammatico di oggi, dal più forte/);
   assert.match(system, /panchina di ieri/);
-  assert.match(system, /LUOGO MAI VISTO/);
+  assert.match(system, /LUOGO NUOVO NEL LIBRO/);
   assert.match(system, /Vietate le astrazioni: perimetro, confine/);
   assert.match(system, /mai il risveglio/);
   assert.match(system, /Realismo magico: il quotidiano è preciso/);

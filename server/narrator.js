@@ -1,11 +1,13 @@
 import { DEFAULT_MODEL, providerOf, resolveModel } from "./meta.js";
 import { HttpError } from "./errors.js";
 import {
+  clockPhrase,
   countChronicleParagraphs,
   countDeviceMentions,
   countHeartbeats,
   countTimeLedParagraphs,
   findBanned,
+  findDataLeaks,
   findDetailHype,
   findEchoes,
   findMeasures,
@@ -13,15 +15,19 @@ import {
   findProfileLabels,
   findProvisionalLeaks,
   findScaffolding,
+  findSentenceEcho,
   findWakeCliches,
   firstSentence,
   fixPrepositions,
-  isInventedTradeName,
+  coerceTradeName,
   isProvisionalAlias,
+  lastSentence,
   opensWithWakeUp,
+  sharedRun,
   titleOverlap,
 } from "./transfiguration.js";
 import {
+  buildClosingLinePrompt,
   buildClosingPrompt,
   buildExpansionPrompt,
   buildMeasurePrompt,
@@ -31,7 +37,7 @@ import {
   buildSystemPrompt,
   buildUserPrompt,
 } from "./prompts.js";
-import { hasStrongEvent, lastSceneOf } from "./dramaturgy.js";
+import { hasStrongEvent, lastSceneOf, strongEventsOf, threadSeed } from "./dramaturgy.js";
 import { readSettings } from "./store.js";
 
 const ENDINGS = new Set(["AT_HOME_RESTING", "OUTSIDE_CLIFFHANGER", "OUTSIDE_AWAY"]);
@@ -69,21 +75,26 @@ export async function writeChapter(payload) {
 
   // 1. Il Drammaturgo progetta il capitolo. Se fallisce, il Narratore scrive
   //    lo stesso, pianificando da sé (peggio, ma il capitolo arriva).
+  // Un secondo tentativo: senza copione il capitolo perde atti e finale.
   let plan = null;
-  try {
-    const planPrompt = buildPlanPrompt(payload);
-    const rawPlan = await askJson(
-      [
-        { role: "system", content: planPrompt.system },
-        { role: "user", content: planPrompt.user },
-      ],
-      { temperature: 0.9, maxTokens: 6000, think: true }
-    );
-    plan = normalizePlan(rawPlan, payload);
-    if (!plan) warnings.push("Il copione del drammaturgo era incompleto: capitolo scritto senza copione.");
-  } catch (error) {
-    warnings.push(`Copione non riuscito: ${error.message}`);
+  const planPrompt = buildPlanPrompt(payload);
+  let planError = "";
+  for (let attempt = 0; attempt < 2 && !plan; attempt += 1) {
+    try {
+      const rawPlan = await askJson(
+        [
+          { role: "system", content: planPrompt.system },
+          { role: "user", content: planPrompt.user },
+        ],
+        { temperature: 0.9, maxTokens: 6000, think: true }
+      );
+      plan = normalizePlan(rawPlan, payload);
+      if (!plan) planError = "il copione del drammaturgo era incompleto";
+    } catch (error) {
+      planError = error.message;
+    }
   }
+  if (!plan) warnings.push(`Copione non riuscito (${planError}): capitolo scritto senza copione.`);
 
   // 2. Il Narratore scrive seguendo il copione.
   const system = buildSystemPrompt(payload, plan);
@@ -158,6 +169,26 @@ export async function writeChapter(payload) {
       warnings.push(`Correzione di stile non riuscita: ${error.message}`);
     }
   }
+  // Finale ricalcato sui capitoli precedenti: si riscrive solo l'ultima frase.
+  const ignore = [context.protagonist?.name, ...context.places].filter(Boolean);
+  if (findSentenceEcho(lastSentence(draft.chapter_text), context.closings, ignore)) {
+    try {
+      const raw = await askJson(
+        [
+          { role: "system", content: system },
+          { role: "user", content: buildClosingLinePrompt(payload, draft, plan, context.closings) },
+        ],
+        { temperature: 0.9, maxTokens: 800 }
+      );
+      const line = clean(fixPrepositions(raw?.ultima_frase), 320);
+      if (line && !findSentenceEcho(line, context.closings, ignore)) {
+        draft = { ...draft, chapter_text: replaceLastSentence(draft.chapter_text, line) };
+      }
+    } catch (error) {
+      warnings.push(`Riscrittura del finale non riuscita: ${error.message}`);
+    }
+  }
+
   const remainingStyle = styleIssuesInDraft(draft, context);
   if (remainingStyle.length) warnings.push(`Restano problemi di stile: ${remainingStyle.join("; ")}.`);
   if (countWords(draft.chapter_text) < MIN_WORDS) {
@@ -170,12 +201,27 @@ export async function writeChapter(payload) {
   adoptPlannedPlaces(state, plan);
   // Il filo resta provvisorio finché la vita non offre un evento forte
   // (l'incidente scatenante); da lì non si riscrive più.
+  // Se il modello si limita a ricopiare il filo provvisorio nel giorno
+  // dell'incidente scatenante, vale il seme concreto calcolato dai dati.
+  const seed = fixPrepositions(threadSeed(payload));
+  const copiedProvisional = !plan?.through_line || plan.through_line === memory.through_line;
   state.through_line = memory.through_line_locked
     ? memory.through_line
-    : plan?.through_line || memory.through_line || state.through_line || "";
+    : hasStrongEvent(payload) && seed && copiedProvisional
+      ? seed
+      : plan?.through_line || memory.through_line || state.through_line || "";
   state.through_line_locked = Boolean(memory.through_line_locked || (state.through_line && hasStrongEvent(payload)));
   state.used_titles = [...(memory.used_titles || []), draft.chapter_title].filter(Boolean).slice(-12);
   state.openings = [...(memory.openings || []), firstSentence(draft.chapter_text)].filter(Boolean).slice(-4);
+  state.closings = [...(memory.closings || []), lastSentence(draft.chapter_text)].filter(Boolean).slice(-4);
+  state.event_log = [...(memory.event_log || []), ...strongEventsOf(payload)].slice(-30);
+  state.prodigies = [...(memory.prodigies || []), plan?.prodigio].filter(Boolean).slice(-6);
+  state.seen_locations = [
+    ...new Set([
+      ...(memory.seen_locations || []),
+      ...(payload.today_unified_telemetry?.unified_scenes || []).map((scene) => scene.location_id).filter(Boolean),
+    ]),
+  ];
   state.last_scene = lastSceneOf(payload, state.established_locations);
 
   const status = await llmStatus();
@@ -194,10 +240,15 @@ export async function writeChapter(payload) {
 
 function styleContext(payload) {
   const scenes = payload.today_unified_telemetry?.unified_scenes || [];
+  const memory = payload.story_state_memory || {};
   return {
     currentDay: Number(payload.book_config?.current_day) || 1,
     protagonist: payload.book_config?.protagonist || null,
-    usedTitles: payload.story_state_memory?.used_titles || [],
+    usedTitles: memory.used_titles || [],
+    openings: memory.openings || [],
+    closings: memory.closings || [],
+    // L'ora di un appunto si può dire al minuto: è l'unico orario esatto ammesso.
+    noteClocks: scenes.flatMap((scene) => (scene.user_notes || []).map((note) => clockPhrase(note.time))),
     places: [
       ...Object.values(payload.story_state_memory?.established_locations || {}),
       ...scenes.map((scene) => scene.location_alias),
@@ -220,10 +271,11 @@ export function normalizePlan(raw, payload) {
     atto_2: {
       scene: scenes
         .slice(0, 3)
-        .map((scene) => pick(scene, ["luogo", "momento", "obiettivo", "ostacolo", "gesto", "pensiero", "esito"], text)),
+        .map((scene) => pick(scene, ["luogo", "momento", "obiettivo", "ostacolo", "gesto", "pensiero", "presenza", "esito"], text)),
       svolta: text(raw.atto_2?.svolta),
     },
     atto_3: pick(raw.atto_3, ["luogo", "momento", "culmine", "domanda_finale"], text),
+    prodigio: text(raw.prodigio),
     immagini: stringList(raw.immagini).slice(0, 2),
     titolo: text(raw.titolo, 140),
     sottotitolo: text(raw.sottotitolo, 180),
@@ -231,11 +283,13 @@ export function normalizePlan(raw, payload) {
   const ids = new Set((payload.today_unified_telemetry?.unified_scenes || []).map((scene) => scene.location_id));
   if (raw.nuovi_luoghi && typeof raw.nuovi_luoghi === "object") {
     for (const [id, value] of Object.entries(raw.nuovi_luoghi)) {
-      const name = clean(value, 120);
-      // Mestieri non documentati («Officina», «Ufficio») non diventano nomi di luogo.
-      if (ids.has(id) && name && !isProvisionalAlias(name) && !isInventedTradeName(name)) plan.nuovi_luoghi[id] = name;
+      // Mestieri non documentati («Officina», «Ufficio») non diventano nomi di
+      // luogo: si sostituiscono col sostantivo di funzione, tenendo l'epiteto.
+      const name = coerceTradeName(clean(fixPrepositions(value), 120), id);
+      if (ids.has(id) && name && !isProvisionalAlias(name)) plan.nuovi_luoghi[id] = name;
     }
   }
+  if (!plan.prodigio) delete plan.prodigio;
   const usable = plan.desiderio && plan.atto_2.scene.length >= 1 && plan.atto_3.domanda_finale;
   return usable ? plan : null;
 }
@@ -282,6 +336,33 @@ export async function composeVolume(book) {
       )
     );
     if (!chapterTitles.includes(retry.book_title.trim().toLowerCase())) closing = retry;
+  }
+  // La quarta non ricopia i capitoli e non parla il gergo del copione.
+  const chapterTexts = book.days.map((day) => day.chapter?.chapter_text || "");
+  const copied = sharedRun(closing.back_cover, chapterTexts);
+  const jargon = closing.back_cover.match(/\b(?:tensione|picco|climax|svolta|salita|posta|prodigio|sobbalzo da fermo|corpo fermo)\b/gi) || [];
+  if (copied || jargon.length) {
+    const problems = [
+      copied ? `ricopia una frase dei capitoli («${copied}…»)` : "",
+      jargon.length ? `usa parole da copione (${[...new Set(jargon.map((w) => w.toLowerCase()))].join(", ")})` : "",
+    ].filter(Boolean).join(" e ");
+    try {
+      const retry = closingFrom(
+        await askJson(
+          [
+            ...messages,
+            {
+              role: "user",
+              content: `La back_cover ${problems}. Rifai l'intero JSON: la quarta apre su una scena del libro scritta di nuovo, con parole tue, e fa sentire che la posta sale attraverso un fatto, mai nominando tensione, picco, salita, svolta o posta.`,
+            },
+          ],
+          { temperature: 0.85, maxTokens: 4000 }
+        )
+      );
+      if (retry.back_cover && !sharedRun(retry.back_cover, chapterTexts)) closing = { ...retry, book_title: closing.book_title };
+    } catch {
+      /* resta la prima versione */
+    }
   }
   const banned = findBanned(Object.values(closing).join("\n"));
   if (banned.length) {
@@ -514,12 +595,12 @@ export function sanitizeState(incoming, previous) {
       : {};
   for (const [key, value] of Object.entries(nextLocations)) {
     if (!/^loc_[a-z0-9_]+$/.test(key)) continue;
-    const alias = clean(value, 160);
+    // Un mestiere inventato si riporta al sostantivo di funzione; se non si può,
+    // il luogo resta da battezzare domani.
+    const alias = coerceTradeName(clean(value, 160), key);
     if (!alias) continue;
     // Un alias provvisorio non è un nome: non si archivia mai come battesimo.
     if (isProvisionalAlias(alias)) continue;
-    // Né un mestiere inventato: il luogo resta da battezzare domani.
-    if (isInventedTradeName(alias)) continue;
     // Un nome già battezzato è immutabile: si può solo battezzare un luogo
     // nuovo o sostituire un alias ancora provvisorio («Luogo sconosciuto»).
     if (established[key] && !isProvisionalAlias(established[key])) continue;
@@ -537,6 +618,10 @@ export function sanitizeState(incoming, previous) {
     // Memoria tenuta dal codice (titoli, aperture, ultima scena), mai dal modello.
     used_titles: stringList(previous?.used_titles),
     openings: stringList(previous?.openings),
+    closings: stringList(previous?.closings),
+    prodigies: stringList(previous?.prodigies),
+    seen_locations: Array.isArray(previous?.seen_locations) ? previous.seen_locations.filter((id) => typeof id === "string") : [],
+    event_log: Array.isArray(previous?.event_log) ? previous.event_log.filter((event) => event && event.kind) : [],
     last_scene: previous?.last_scene || null,
     through_line_locked: Boolean(previous?.through_line_locked),
     previous_chapter_summary: clean(source.previous_chapter_summary, 2500) || previous?.previous_chapter_summary || "",
@@ -560,8 +645,16 @@ function forceEnding(state, payload) {
 
 // context: { currentDay, protagonist, usedTitles } — un numero vale come currentDay.
 export function styleIssuesInDraft(draft, context = {}) {
-  const { currentDay = 1, protagonist = null, usedTitles = [], places = [], peakAtRest = true } =
-    context && typeof context === "object" ? context : { currentDay: context };
+  const {
+    currentDay = 1,
+    protagonist = null,
+    usedTitles = [],
+    places = [],
+    peakAtRest = true,
+    openings = [],
+    closings = [],
+    noteClocks = [],
+  } = context && typeof context === "object" ? context : { currentDay: context };
   const issues = [];
   const words = countWords(draft.chapter_text);
   if (words > 880) {
@@ -598,7 +691,7 @@ export function styleIssuesInDraft(draft, context = {}) {
   if (opensWithWakeUp(draft.chapter_text)) {
     issues.push("il capitolo si apre con il risveglio: comincia invece dall'immagine d'apertura del copione");
   }
-  const scaffolding = findScaffolding(draft.chapter_text);
+  const scaffolding = findScaffolding([draft.chapter_title, draft.chapter_subtitle, draft.chapter_text].join("\n"));
   if (scaffolding.length) {
     issues.push(`parole del mestiere nella prosa (${scaffolding.join(", ")}): fai sentire la cosa con un gesto o un pensiero`);
   }
@@ -621,6 +714,26 @@ export function styleIssuesInDraft(draft, context = {}) {
   const incipit = String(draft.chapter_text || "").split(/\n\s*\n/).slice(0, 2).join(" ");
   if (Number(currentDay) <= 1 && protagonist?.age && !/\banni\b/i.test(incipit)) {
     issues.push(`primo capitolo senza l'età del protagonista nell'incipit: ${protagonist.age} anni, dentro un gesto`);
+  }
+  const dataLeaks = findDataLeaks([draft.chapter_subtitle, draft.chapter_text].join("\n"), noteClocks);
+  if (dataLeaks.length) {
+    issues.push(`lessico da registro dei dati nella prosa (${dataLeaks.join(", ")}): gli orari si dicono a grandi linee, ciò che manca si tace o si pensa, mai «non documentato» o «senza traccia»`);
+  }
+  const ignore = [protagonist?.name, ...places].filter(Boolean);
+  const closing = lastSentence(draft.chapter_text);
+  const closingEcho = findSentenceEcho(closing, closings, ignore);
+  if (closingEcho) {
+    issues.push(`l'ultima frase («${closing}») ricalca il finale di un capitolo precedente («${closingEcho}»): chiudi su altro — un gesto sospeso, una scelta a metà, un'immagine aperta`);
+  }
+  if (Number(currentDay) > 1) {
+    const opening = firstSentence(draft.chapter_text);
+    const openingEcho = findSentenceEcho(opening, openings, ignore);
+    if (openingEcho) {
+      issues.push(`la prima frase riprende immagini di un'apertura precedente («${openingEcho}»): apri su un'immagine nuova`);
+    }
+  }
+  if (/\b(?:cronaca|diario|resoconto|bollettino)\b/i.test([draft.chapter_title, draft.chapter_subtitle].join(" "))) {
+    issues.push("titolo o sottotitolo dichiarano una cronaca o un diario: devono promettere una storia");
   }
   const recycled = titleOverlap(draft.chapter_title, usedTitles);
   if (recycled.length) {
@@ -654,11 +767,25 @@ function draftBlob(draft) {
 
 function stringList(value) {
   if (!Array.isArray(value)) return [];
-  return value.map((item) => clean(item, 240)).filter(Boolean).slice(0, 12);
+  // Il modello a volte restituisce oggetti ({tensione, luogo, momento}) invece
+  // di frasi: si tengono i valori, mai «[object Object]».
+  const flat = (item) =>
+    item && typeof item === "object"
+      ? Object.values(item).filter((part) => typeof part === "string" && part.trim()).join(" — ")
+      : item;
+  return value.map((item) => clean(flat(item), 240)).filter(Boolean).slice(0, 12);
 }
 
 function clean(value, max) {
   return String(value || "").trim().slice(0, max);
+}
+
+export function replaceLastSentence(text, line) {
+  const source = String(text || "").trimEnd();
+  const last = lastSentence(source);
+  const at = last ? source.lastIndexOf(last) : -1;
+  const sentence = line.charAt(0).toUpperCase() + line.slice(1);
+  return at >= 0 ? `${source.slice(0, at)}${sentence}` : `${source}\n\n${sentence}`;
 }
 
 export function countWords(text) {

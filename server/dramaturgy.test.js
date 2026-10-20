@@ -15,14 +15,14 @@ import {
 test("il materiale drammatico mette in testa appunti, luoghi nuovi e picchi da fermo", () => {
   const events = dramaticEvents(samplePayload);
   assert.match(events[0], /^APPUNTO/);
-  assert.ok(events.some((event) => /^LUOGO MAI VISTO/.test(event)));
+  assert.ok(events.some((event) => /^LUOGO NUOVO NEL LIBRO/.test(event)));
   assert.ok(events.some((event) => /^PICCO A CORPO FERMO/.test(event)));
   assert.ok(events.some((event) => /^FINE GIORNATA FUORI CASA/.test(event)));
   // Le cifre della biometria non passano nel materiale.
   assert.ok(events.every((event) => !/bpm|\d{2,3}\s*%/.test(event)));
 });
 
-test("il ponte da ieri segnala un rientro non documentato", () => {
+test("il ponte da ieri riparte dal cliffhanger e dalla sua ultima frase", () => {
   const payload = structuredClone(samplePayload);
   payload.story_state_memory.last_chapter_ending_state = "OUTSIDE_CLIFFHANGER";
   payload.story_state_memory.last_scene = { place: "Il Luogo della Soglia", when: "da poco dopo le ventuno a mezzanotte" };
@@ -30,9 +30,12 @@ test("il ponte da ieri segnala un rientro non documentato", () => {
     { time_window: "00:17 - 05:25", location_id: "loc_home", location_alias: "La Casa", user_notes: [] },
     ...payload.today_unified_telemetry.unified_scenes,
   ];
+  payload.story_state_memory.closings = ["Che cosa lo trattiene ancora sulla soglia?"];
   const bridge = bridgeFromYesterday(payload);
   assert.match(bridge, /Ieri il capitolo si è chiuso a Il Luogo della Soglia/);
-  assert.match(bridge, /Il rientro non è documentato/);
+  assert.match(bridge, /Ultima frase di ieri: «Che cosa lo trattiene ancora sulla soglia\?»/);
+  assert.match(bridge, /Oggi si riparte da lì, dalla mezzanotte: la prima traccia lo trova già a casa poco dopo mezzanotte/);
+  assert.doesNotMatch(bridge, /documentat/);
   // Nel blocco finale la preposizione è già articolata.
   assert.match(materialBlock(payload), /chiuso al Luogo della Soglia/);
 });
@@ -98,7 +101,7 @@ test("un copione senza desiderio o domanda finale non si usa", () => {
   assert.deepEqual(plan.nuovi_luoghi, { loc_unknown_est_new: "Il Cortile della Pioggia" });
 });
 
-test("il copione scarta nomi di luogo con mestieri non documentati", () => {
+test("il copione toglie i mestieri non documentati dai nomi di luogo", () => {
   const plan = normalizePlan(
     {
       desiderio: "tornare a ovest",
@@ -108,5 +111,5 @@ test("il copione scarta nomi di luogo con mestieri non documentati", () => {
     },
     samplePayload
   );
-  assert.deepEqual(plan.nuovi_luoghi, {});
+  assert.deepEqual(plan.nuovi_luoghi, { loc_unknown_est_new: "Il Luogo delle Ombre" });
 });

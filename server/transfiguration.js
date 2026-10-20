@@ -102,6 +102,21 @@ export function isInventedTradeName(name) {
   );
 }
 
+const FUNCTION_NOUN_BY_KIND = { work: "Lavoro", cafe: "Locale", park: "Giardino", street: "Via", unknown: "Luogo" };
+
+// «L'Officina dei Registri» per un luogo di lavoro diventa «Il Lavoro dei
+// Registri»: si tiene l'epiteto e si toglie il mestiere non documentato.
+// Scartare il nome lasciava il luogo senza battesimo, e ogni giorno ne nasceva
+// uno diverso. Senza complemento («L'Officina Silenziosa») il nome si scarta.
+export function coerceTradeName(name, locationId = "") {
+  const source = String(name || "").trim();
+  if (!isInventedTradeName(source)) return source;
+  const rest = source.match(/^(?:l['’]\s*|la |il |lo )?(?:officina|fabbrica|ufficio|studio|negozio|vetrina|bottega|atelier)(\s+d(?:i|el|ell['’]|ella|elle|ei|egli|ello)\b.*)$/i)?.[1];
+  const kind = String(locationId).match(/^loc_(work|cafe|park|street|unknown)/)?.[1];
+  if (!rest || !kind) return "";
+  return `Il ${FUNCTION_NOUN_BY_KIND[kind]}${rest}`.replace(/^Il Luogo/, "Il Luogo").replace(/^Il Via/, "La Via");
+}
+
 export function isProvisionalAlias(alias) {
   return /^luogo sconosciuto/i.test(String(alias || "").trim());
 }
@@ -448,7 +463,8 @@ const ARTICLE_TAIL = { il: "l", lo: "llo", la: "lla", i: "i", gli: "gli", le: "l
 // anche quando il prompt lo vieta, quindi si corregge qui, senza un'altra chiamata.
 export function fixPrepositions(text) {
   return String(text || "").replace(
-    /(^|[^\p{L}'’])(di|de|a|da|in|ne|su|Di|De|A|Da|In|Ne|Su)\s+(Il|Lo|La|I|Gli|Le|L['’])(?=[\s\p{L}])/gu,
+    // L'articolo deve essere una parola intera: «a Lavoro», «di Levante» restano intatti.
+    /(^|[^\p{L}'’])(di|de|a|da|in|ne|su|Di|De|A|Da|In|Ne|Su)\s+((?:Il|Lo|La|I|Gli|Le)(?=\s)|L['’](?=\p{L}))/gu,
     (match, before, prep, article) => {
       const stem = PREP_STEM[prep.toLowerCase()];
       const tail = ARTICLE_TAIL[article.toLowerCase().replace("’", "'")];
@@ -469,8 +485,10 @@ const SCAFFOLDING = [
   /\bpunto di svolta\b/i,
   /\bla svolta\b/i,
   /\bl['’]innesco\b/i,
-  /\b(?:primo|secondo|terzo) atto\b/i,
+  /\b(?:primo|secondo|terzo|ultimo) atto\b/i,
   /\bclimax\b/i,
+  // Il prodigio del realismo magico si accoglie senza nominarlo.
+  /\bprodigi[oa]?\b/i,
   /\bposta in gioco\b/i,
   /\bl['’]intento era\b/i,
   /\bprima prova\b/i,
@@ -552,6 +570,102 @@ export function countChronicleParagraphs(text) {
 
 export function firstSentence(text) {
   return (String(text || "").trim().split(/(?<=[.!?…])\s/)[0] || "").slice(0, 200);
+}
+
+export function lastSentence(text) {
+  return (String(text || "").trim().split(/(?<=[.!?…])\s+/).at(-1) || "").slice(0, 240);
+}
+
+// Le note di regia del codice («non documentato», «ore senza traccia») e il
+// lessico dei sensori non devono arrivare in pagina: il lettore sente il dato,
+// non lo legge.
+const DATA_LEAKS = [
+  /\bnon documentat\w*/gi,
+  /\bsenza traccia\b/gi,
+  /\bvuoto temporale\b/gi,
+  /\bpermanenza fuori casa\b/gi,
+  /\b(?:moderata|elevata|alta|bassa|lieve) umidità/gi,
+  /\bumidità (?:moderata|elevata|alta|bassa|lieve)\b/gi,
+  /\bcausa ignota\b/gi,
+  /\bdati\b/gi,
+];
+
+const MINUTE_WORDS =
+  "(?:uno|due|tre|quattro|cinque|sei|sette|otto|nove|dieci|undici|dodici|tredici|quattordici|quindici|sedici|diciassette|diciotto|diciannove|vent\\p{L}*|trent\\p{L}*|quarant\\p{L}*|cinquant\\p{L}*)";
+const HOUR_WORDS =
+  "(?:zero|mezzanotte|mezzogiorno|l['’]una|una|due|tre|quattro|cinque|sei|sette|otto|nove|dieci|undici|tredici|quattordici|quindici|sedici|diciassette|diciotto|diciannove|venti|ventuno|ventidue|ventitré)";
+// «alle quindici e trentacinque», «le ventuno e sette»: orari da registro.
+const MINUTE_CLOCK = new RegExp(`\\b(?:alle|delle|dalle|sulle|le|a|all['’]|dell['’])\\s*${HOUR_WORDS}\\s+e\\s+${MINUTE_WORDS}(?!\\p{L})`, "giu");
+
+export function findDataLeaks(text, allowed = []) {
+  const source = String(text || "");
+  const ok = new Set(allowed.map((item) => String(item).toLowerCase()));
+  const found = new Set();
+  for (const pattern of [...DATA_LEAKS, MINUTE_CLOCK]) {
+    for (const match of source.matchAll(pattern)) {
+      const hit = match[0].toLowerCase();
+      if (![...ok].some((allowedClock) => allowedClock.includes(hit) || hit.includes(allowedClock))) found.add(hit);
+    }
+  }
+  return [...found].slice(0, 8);
+}
+
+const ECHO_SKIP = new Set(["quella", "quello", "quelle", "quegli", "ancora", "sempre", "dentro", "fuori", "mentre", "prima", "dopo", "senza", "verso", "della", "delle", "dello", "nella", "nelle", "sulla", "sulle", "dalla", "dalle"]);
+
+function contentWords(text, ignore = []) {
+  const skip = new Set(ignore.flatMap((name) => String(name).toLowerCase().split(/[^\p{L}]+/u)).filter(Boolean));
+  return new Set(
+    String(text || "")
+      .toLowerCase()
+      .split(/[^\p{L}'’]+/u)
+      .map((raw) => raw.split(/['’]/).pop() || "")
+      .filter((word) => word.length >= 5 && !ECHO_SKIP.has(word) && !ECHO_STOPWORDS.has(word) && !skip.has(word))
+      .map((word) => word.slice(0, 6))
+  );
+}
+
+// Prima parola significativa: congiunzioni, articoli e nomi propri non contano
+// («Mirko osserva…» e «Mirko rimane…» non sono lo stesso finale).
+function leadWord(text, ignore = []) {
+  const skip = new Set(["e", "ma", "o", "ed", "il", "lo", "la", "i", "gli", "le", "un", "una", "uno"]);
+  for (const name of ignore) for (const part of String(name).toLowerCase().split(/[^\p{L}]+/u)) if (part) skip.add(part);
+  return (
+    String(text || "")
+      .toLowerCase()
+      .replace(/^[^\p{L}]+/u, "")
+      .split(/[^\p{L}]+/u)
+      .find((word) => word && !skip.has(word)) || ""
+  );
+}
+
+// Una frase (apertura o chiusa) che ricalca una dei capitoli precedenti:
+// stessa parola d'attacco («Tornerà…») o almeno due parole piene in comune
+// («vernice azzurra della cornice»). Nomi propri e luoghi non contano.
+export function findSentenceEcho(sentence, previous = [], ignore = []) {
+  const lead = leadWord(sentence, ignore);
+  const words = contentWords(sentence, ignore);
+  for (const before of previous.filter(Boolean)) {
+    if (lead && lead.length > 2 && lead === leadWord(before, ignore)) return before;
+    const shared = [...contentWords(before, ignore)].filter((word) => words.has(word));
+    if (shared.length >= 2) return before;
+  }
+  return "";
+}
+
+// Frasi lunghe copiate da un testo all'altro (la quarta che ricopia l'incipit).
+export function sharedRun(text, sources = [], size = 7) {
+  const tokens = (value) => String(value || "").toLowerCase().split(/[^\p{L}]+/u).filter(Boolean);
+  const grams = new Set();
+  for (const source of sources) {
+    const list = tokens(source);
+    for (let i = 0; i + size <= list.length; i += 1) grams.add(list.slice(i, i + size).join(" "));
+  }
+  const list = tokens(text);
+  for (let i = 0; i + size <= list.length; i += 1) {
+    const gram = list.slice(i, i + size).join(" ");
+    if (grams.has(gram)) return gram;
+  }
+  return "";
 }
 
 const TITLE_STOP = new Set(["della", "delle", "degli", "dello", "nella", "nelle", "sulla", "sulle", "dalla", "dalle", "quando", "senza", "verso", "oltre", "sotto", "sopra", "prima", "dopo", "ancora"]);

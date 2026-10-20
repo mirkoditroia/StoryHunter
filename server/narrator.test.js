@@ -98,11 +98,19 @@ test("filo conduttore e ritratto sopravvivono se il modello li omette", () => {
   assert.equal(next.character_portrait, "Ride per difendersi.");
 });
 
-test("un nome di luogo con un mestiere inventato non si archivia", () => {
+test("un nome di luogo con un mestiere inventato torna al sostantivo di funzione", () => {
   const next = sanitizeState(
-    { established_locations: { loc_cafe_new: "L'Officina dei Numeri Freddi", loc_park_new: "Il Giardino del Vento" } },
+    {
+      established_locations: {
+        loc_cafe_new: "L'Officina dei Numeri Freddi",
+        loc_work_new: "L'Officina Silenziosa",
+        loc_park_new: "Il Giardino del Vento",
+      },
+    },
     previous
   );
-  assert.equal(next.established_locations.loc_cafe_new, undefined);
+  assert.equal(next.established_locations.loc_cafe_new, "Il Locale dei Numeri Freddi");
+  // Senza complemento non c'è epiteto da salvare: il luogo resta da battezzare.
+  assert.equal(next.established_locations.loc_work_new, previous.established_locations?.loc_work_new);
   assert.equal(next.established_locations.loc_park_new, "Il Giardino del Vento");
 });
