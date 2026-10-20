@@ -758,6 +758,21 @@ const SCENARIOS = [
   },
 ];
 
+const SLOT_BOUNDS = {
+  SLOT_1_NIGHT: [0, 5 * 60 + 59],
+  SLOT_2_MORNING: [6 * 60, 11 * 60 + 59],
+  SLOT_3_AFTERNOON: [12 * 60, 17 * 60 + 59],
+  SLOT_4_EVENING: [18 * 60, 23 * 60 + 59],
+};
+
+const SKIES = {
+  wet: ["Pioggia fine", "Pioggia leggera", "Pioggia moderata", "Coperto e umido", "Rovescio breve"],
+  dry: ["Sereno", "Poco nuvoloso", "Coperto", "Foschia alta", "Nuvoloso", "Sole velato"],
+  night: ["Sereno", "Coperto", "Foschia", "Aria ferma", "Nuvoloso"],
+};
+
+const WIND_DIRS = ["nord", "sud", "est", "ovest", "nord-est", "sud-ovest", "nord-ovest"];
+
 export function hashSeed(value) {
   let hash = 2166136261;
   for (const ch of String(value || "story")) {
@@ -767,11 +782,203 @@ export function hashSeed(value) {
   return hash >>> 0;
 }
 
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function next() {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function rngFrom(seed) {
+  const next = mulberry32(hashSeed(seed));
+  return {
+    next,
+    int(span) {
+      return Math.floor(next() * span);
+    },
+    signed(span) {
+      return Math.floor(next() * (span * 2 + 1)) - span;
+    },
+  };
+}
+
+function shuffledRange(bookId, total) {
+  const items = Array.from({ length: total }, (_, index) => index);
+  const next = mulberry32(hashSeed(`order:${bookId}`));
+  for (let index = total - 1; index > 0; index -= 1) {
+    const swap = Math.floor(next() * (index + 1));
+    const current = items[index];
+    items[index] = items[swap];
+    items[swap] = current;
+  }
+  return items;
+}
+
 export function scenarioIndex(bookId, day = 1, shift = 0, count = SCENARIOS.length) {
   const total = count || 1;
-  const base = hashSeed(bookId) % total;
-  const delta = (Number(day) || 1) - 1 + (Number(shift) || 0);
-  return ((base + delta) % total + total) % total;
+  const order = shuffledRange(bookId, total);
+  const cursor = (((Number(day) || 1) - 1 + (Number(shift) || 0)) % total + total) % total;
+  return order[cursor];
+}
+
+function pickScenario(bookId, day, shift, avoid) {
+  const total = SCENARIOS.length;
+  const order = shuffledRange(bookId, total);
+  const start = (((Number(day) || 1) - 1 + (Number(shift) || 0)) % total + total) % total;
+  const blocked = new Set(avoid);
+  for (let step = 0; step < total; step += 1) {
+    const scenario = SCENARIOS[order[(start + step) % total]];
+    if (!blocked.has(scenario.id)) return scenario;
+  }
+  return SCENARIOS[order[start]];
+}
+
+function clockOf(total) {
+  const mins = Math.max(0, Math.min(23 * 60 + 59, total));
+  return `${String(Math.floor(mins / 60)).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}`;
+}
+
+function minutesOf(clock) {
+  const [hour, minute] = String(clock || "0:0").split(":").map(Number);
+  return hour * 60 + minute;
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function varyWeather(text, slotId, rng) {
+  const wet = /pioggia|umid|rovescio|nebbi/i.test(text);
+  const pool = wet ? SKIES.wet : slotId === "SLOT_1_NIGHT" ? SKIES.night : SKIES.dry;
+  const sky = pool[rng.int(pool.length)];
+  const found = Number(String(text).match(/(-?\d+)\s*°/)?.[1]);
+  const night = slotId === "SLOT_1_NIGHT";
+  const temp = Number.isFinite(found)
+    ? clamp(found + rng.signed(4), night ? -1 : 2, night ? 18 : 34)
+    : (night ? 3 : 8) + rng.int(night ? 10 : 16);
+  if (rng.next() < 0.34) return `${sky}, ${temp}°, umidità ${64 + rng.int(31)}%`;
+  return `${sky}, ${temp}°, vento da ${WIND_DIRS[rng.int(WIND_DIRS.length)]} ${3 + rng.int(28)} km/h`;
+}
+
+function varyMinutes(value, rng) {
+  const amount = Number(value) || 0;
+  if (amount <= 0) return rng.next() < 0.62 ? rng.int(22) : 0;
+  return clamp(Math.round(amount * (0.45 + rng.next() * 1.15)) + rng.signed(6), 1, 180);
+}
+
+function splitSlack(slack, parts, rng) {
+  const weights = Array.from({ length: parts }, () => rng.next() + 0.05);
+  const sum = weights.reduce((total, weight) => total + weight, 0);
+  const gaps = weights.map((weight) => Math.floor((weight / sum) * slack));
+  let leftover = slack - gaps.reduce((total, gap) => total + gap, 0);
+  while (leftover > 0) {
+    gaps[rng.int(parts)] += 1;
+    leftover -= 1;
+  }
+  return gaps;
+}
+
+function varyPlaceBody(place, rng) {
+  const next = { ...place };
+  const sleeping = place.kind === "home" && place.movement === "STILL" && place.hr_avg <= 62;
+  if (sleeping) {
+    next.hr_avg = clamp(place.hr_avg + rng.signed(3), 48, 61);
+    next.stress = "low";
+  } else if (place.movement === "WALKING") {
+    next.hr_avg = clamp(place.hr_avg + rng.signed(8), 90, 156);
+    next.stress = next.hr_avg >= 118 ? "high" : "moderate";
+  } else {
+    next.hr_avg = clamp(place.hr_avg + rng.signed(7), 63, 132);
+  }
+  next.spo2 = 96 + rng.int(4);
+  if (place.hr_peak) {
+    next.hr_peak = clamp(Math.max(next.hr_avg + 8, place.hr_peak + rng.signed(9)), next.hr_avg + 8, 188);
+  } else {
+    next.hr_peak = null;
+    next.hr_peak_time = "";
+  }
+  return next;
+}
+
+function varyPlaces(slot, rng) {
+  const [from, to] = SLOT_BOUNDS[slot.id];
+  const originals = (slot.places || []).map((place) => ({ ...place }));
+  if (!originals.length) return originals;
+  const durations = originals.map((place) => {
+    const length = Math.max(1, minutesOf(place.end) - minutesOf(place.start));
+    if (length <= 14) return length;
+    const shrink = Math.min(length - 12, 4 + rng.int(11));
+    return length - shrink;
+  });
+  const slack = to - from - durations.reduce((total, length) => total + length, 0);
+  if (slack < 0) {
+    return originals.map((place) => varyPlaceBody(place, rng));
+  }
+  const gaps = splitSlack(slack, originals.length + 1, rng);
+  let cursor = from + gaps[0];
+  return originals.map((place, index) => {
+    const start = cursor;
+    const end = start + durations[index];
+    cursor = end + gaps[index + 1];
+    const next = varyPlaceBody(place, rng);
+    next.start = clockOf(start);
+    next.end = clockOf(end);
+    if (place.hr_peak) {
+      const oldStart = minutesOf(place.start);
+      const oldEnd = Math.max(oldStart + 1, minutesOf(place.end));
+      const oldPeak = minutesOf(place.hr_peak_time || place.start);
+      const ratio = clamp((oldPeak - oldStart) / (oldEnd - oldStart), 0, 1);
+      const peak = clamp(start + Math.round(ratio * (end - start)) + rng.signed(3), start, end);
+      next.hr_peak_time = clockOf(peak);
+    }
+    return next;
+  });
+}
+
+export function personalizeSlots(slots, seed) {
+  const rng = rngFrom(seed);
+  return (slots || []).map((slot) => ({
+    ...slot,
+    weather: varyWeather(slot.weather, slot.id, rng),
+    doomscrolling_minutes: varyMinutes(slot.doomscrolling_minutes, rng),
+    messaging_minutes: varyMinutes(slot.messaging_minutes, rng),
+    wake_time: slot.wake_time
+      ? clockOf(
+          clamp(
+            minutesOf(slot.wake_time) + rng.signed(22),
+            SLOT_BOUNDS[slot.id][0],
+            SLOT_BOUNDS[slot.id][1]
+          )
+        )
+      : "",
+    places: varyPlaces(slot, rng),
+    notes: Array.isArray(slot.notes) ? slot.notes.map((note) => ({ ...note })) : [],
+  }));
+}
+
+function dayDigest(slots) {
+  const wake = slots.map((slot) => slot.wake_time).find(Boolean);
+  const skies = slots.map((slot) => String(slot.weather || "").split(",")[0].trim()).filter(Boolean);
+  const peak = slots
+    .flatMap((slot) => slot.places)
+    .reduce((max, place) => Math.max(max, Number(place.hr_peak) || Number(place.hr_avg) || 0), 0);
+  const wakeText = wake ? `Sveglia alle ${wake}` : "Nessuna sveglia in questa giornata";
+  const skyText = skies.length ? `${skies[0]} all'inizio, ${skies.at(-1)} verso sera` : "";
+  return `${wakeText}. ${skyText}. Battito fino a ${peak}.`;
+}
+
+export function simulatedDay({ bookId = "", day = 1, shift = 0, avoid = [] } = {}) {
+  const scenario = pickScenario(bookId, day, shift, avoid);
+  const slots = personalizeSlots(scenario.build(), `${bookId}:${day}:${shift}:${scenario.id}`);
+  return {
+    id: scenario.id,
+    name: scenario.name,
+    description: dayDigest(slots),
+    slots,
+  };
 }
 
 export function listScenarios() {
@@ -800,9 +1007,9 @@ export function telemetryIsBlank(slots) {
   });
 }
 
-export function applySimulatedTelemetry(slots, { bookId = "", day = 1, shift = 0 } = {}) {
+export function applySimulatedTelemetry(slots, { bookId = "", day = 1, shift = 0, avoid = [] } = {}) {
   if (!telemetryIsBlank(slots)) return slots;
-  const scenario = listScenarios()[scenarioIndex(bookId, day, shift)];
+  const scenario = simulatedDay({ bookId, day, shift, avoid });
   const prior = new Map((Array.isArray(slots) ? slots : []).map((slot) => [slot?.id, slot]));
   return scenario.slots.map((slot) => {
     const previous = prior.get(slot.id);

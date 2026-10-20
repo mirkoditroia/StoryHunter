@@ -52,7 +52,7 @@ export function findMeasures(text) {
   const found = new Set();
   const source = String(text || "");
   const measure =
-    /\d+(?:[.,]\d+)?\s*(?:°|º|%)|[°%]|centigradi|\b(?:gradi|percento|percentuale|bpm|pulsazioni)\b|battiti al minuto|saturazione dell['’]ossigeno|\bkm\/h\b/gi;
+    /\d+(?:[.,]\d+)?\s*(?:°|º|%)|[°%]|centigradi|\b(?:gradi|percento|percentuale|bpm|pulsazioni|tachicardi\w*)\b|battiti al minuto|saturazione dell['’]ossigeno|\bkm\/h\b/gi;
   for (const match of source.matchAll(measure)) {
     found.add(match[0].toLowerCase());
   }
@@ -71,25 +71,147 @@ export function findBanned(text) {
 }
 
 export function homeAlias(genre, metaphorDomain = "") {
+  // Il sostantivo dice la funzione (è la casa intera, mai una sola stanza);
+  // la lente del protagonista entra solo come epiteto.
   const domain = metaphorDomain.toLowerCase();
   if (genre.startsWith("Noir")) {
-    if (domain.startsWith("arti")) return "La Camera Oscura";
-    if (domain.startsWith("cucina")) return "La Cucina Fredda";
-    if (domain.startsWith("sport")) return "Lo Stanzino del Corpo";
-    if (domain.startsWith("musica")) return "La Stanza Sorda";
-    return "L'Appartamento in Penombra";
+    if (domain.startsWith("arti")) return "La Casa in Penombra";
+    if (domain.startsWith("cucina")) return "La Casa Fredda";
+    if (domain.startsWith("sport")) return "La Casa del Corpo Stanco";
+    if (domain.startsWith("musica")) return "La Casa Sorda";
+    return "La Casa in Penombra";
   }
   if (genre.startsWith("Realismo")) {
-    if (domain.startsWith("cucina")) return "Il Rifugio delle Spezie";
+    if (domain.startsWith("cucina")) return "La Casa delle Spezie";
     if (domain.startsWith("arti")) return "La Casa delle Finestre Dipinte";
-    if (domain.startsWith("sport")) return "La Stanza che Respira";
+    if (domain.startsWith("sport")) return "La Casa che Respira";
     if (domain.startsWith("musica")) return "La Casa delle Corde Mute";
     return "La Casa dalle Pareti Larghe";
   }
-  if (domain.startsWith("cucina")) return "Il Quartier Generale delle Pentole";
-  if (domain.startsWith("arti")) return "Il Museo Domestico";
-  if (domain.startsWith("sport")) return "La Palestra del Divano";
-  return "Il Quartier Generale del Divano";
+  if (domain.startsWith("cucina")) return "La Casa delle Pentole";
+  if (domain.startsWith("arti")) return "La Casa Museo";
+  if (domain.startsWith("sport")) return "La Casa del Divano";
+  return "La Casa del Divano";
+}
+
+// Un nome di luogo non può dichiarare un mestiere che i dati non documentano
+// («L'Officina…», «L'Ufficio…»): il sostantivo dice solo la funzione.
+export function isInventedTradeName(name) {
+  return /^(?:l['’]\s*|la |il |lo )?(?:officina|fabbrica|ufficio|studio|negozio|vetrina|bottega|atelier)\b/i.test(
+    String(name || "").trim()
+  );
+}
+
+export function isProvisionalAlias(alias) {
+  return /^luogo sconosciuto/i.test(String(alias || "").trim());
+}
+
+const HEARTBEAT = /\b(?:cuore|battit\w*|polso|pulsazion\w*|cardiac\w*)\b/gi;
+
+export function countHeartbeats(text) {
+  return (String(text || "").match(HEARTBEAT) || []).length;
+}
+
+const ECHO_STOPWORDS = new Set([
+  "mentre",
+  "ancora",
+  "quando",
+  "prima",
+  "dopo",
+  "giorno",
+  "notte",
+  "mattina",
+  "pomeriggio",
+  "sera",
+  "stesso",
+  "stessa",
+  "stessi",
+  "stesse",
+  "quello",
+  "quella",
+  "questo",
+  "questa",
+  "essere",
+  "aveva",
+  "erano",
+  "senza",
+  "sopra",
+  "sotto",
+  "verso",
+  "oltre",
+  "lungo",
+  "dentro",
+  "fuori",
+  "avevano",
+]);
+
+function echoToken(raw) {
+  // «l'asfalto» e «d'asfalto» sono la stessa parola: conta il frammento dopo l'elisione.
+  const tail = String(raw).split(/['’]/).pop() || "";
+  return tail
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z]/g, "");
+}
+
+const PROVISIONAL_PHRASES = [
+  "luogo di fatica quotidiana",
+  "orari fissi e stanze chiuse",
+  "tratto di strada urbana",
+  "giardino pubblico con panchine",
+  "locale con tavoli, in mezzo agli altri",
+  "luogo mai nominato prima",
+  "luogo sconosciuto",
+];
+
+export function findProvisionalLeaks(text) {
+  const source = String(text || "").toLowerCase();
+  return PROVISIONAL_PHRASES.filter((phrase) => source.includes(phrase));
+}
+
+const TIME_LED = /^(alle|all'|a mezzogiorno|a mezzanotte|verso le|poco prima delle|poco dopo le|nel primo pomeriggio|in serata)\b/i;
+
+export function countTimeLedParagraphs(text) {
+  return String(text || "")
+    .split(/\n\s*\n/)
+    .map((paragraph) => paragraph.trim())
+    .filter((paragraph) => paragraph && TIME_LED.test(paragraph)).length;
+}
+
+// Il dettaglio di un appunto (qui: la bevanda) non si celebra né si ripete:
+// giochi di parole e ritorni sono un tormentone, non un motivo.
+export function findDetailHype(text) {
+  const source = String(text || "").toLowerCase();
+  const hype = source.match(/schium\w*|luppolo|boccal\w*/g) || [];
+  const beers = source.match(/birr\w*/g) || [];
+  const hits = [...hype];
+  if (beers.length > 1) hits.push(...beers);
+  return hits;
+}
+
+const WAKE_CLICHES = ["ruppe l'incantesimo del sonno", "squarciò il buio", "decretò la fine della pace", "richiamo metallico"];
+
+export function findWakeCliches(text) {
+  const source = String(text || "").toLowerCase();
+  return WAKE_CLICHES.filter((phrase) => source.includes(phrase));
+}
+
+export function findEchoes(text) {
+  const found = new Set();
+  const sentences = String(text || "").split(/[.!?…]+/);
+  for (const sentence of sentences) {
+    const counts = new Map();
+    for (const raw of sentence.split(/\s+/)) {
+      const token = echoToken(raw);
+      if (token.length < 6 || ECHO_STOPWORDS.has(token)) continue;
+      counts.set(token, (counts.get(token) || 0) + 1);
+    }
+    for (const [token, count] of counts) {
+      if (count > 1) found.add(token);
+    }
+  }
+  return [...found].slice(0, 6);
 }
 
 export function clockPhrase(time) {
@@ -140,42 +262,32 @@ function minutePhrase(minute) {
   return `e ${stem}${units[unit]}`;
 }
 
-export function wakeTranslation(genre, time) {
-  if (!time) {
-    return "Nessun richiamo ha spezzato il sonno in un'ora precisa.";
-  }
+// Il risveglio arriva al narratore come dato, non come frase fatta:
+// una formula pronta finiva ricopiata in apertura di ogni capitolo.
+export function wakeTranslation(_genre, time) {
+  if (!time) return "Risveglio senza un'ora precisa. Dato di contorno: si racconta solo se serve alla storia.";
   const hour = Number(time.slice(0, 2));
-  const when = clockPhrase(time);
-  const early = hour < 6;
-  const late = hour >= 9;
+  const moment = hour < 6 ? "prima dell'alba, molto presto" : hour >= 9 ? "tardi rispetto al mattino" : "a un'ora consueta del mattino";
+  return `Risveglio ${roughClock(time)}, ${moment}. Dato di contorno: si racconta solo se serve alla storia.`;
+}
 
-  if (genre.startsWith("Noir")) {
-    if (early) {
-      return `La sirena del mattino squarciò il buio della stanza ${when}, prima che la città ammettesse di essere sveglia.`;
-    }
-    if (late) {
-      return `La sirena del mattino arrivò tardi e squarciò comunque il buio della stanza ${when}.`;
-    }
-    return `La sirena del mattino squarciò il buio della stanza ${when}.`;
-  }
+// Ora detta come la direbbe una persona: «poco prima delle sette», «verso le nove».
+export function roughClock(time) {
+  if (!time || !/^\d{2}:\d{2}$/.test(time)) return "a un'ora imprecisata";
+  const hour = Number(time.slice(0, 2));
+  const minute = Number(time.slice(3, 5));
+  if (minute >= 40) return `poco prima ${hourWith("di", (hour + 1) % 24)}`;
+  if (minute >= 20) return `verso ${hourWith("", hour)} e mezza`;
+  if (minute >= 5) return `poco dopo ${hourWith("", hour)}`;
+  return `verso ${hourWith("", hour)}`;
+}
 
-  if (genre.startsWith("Realismo")) {
-    if (early) {
-      return `Il richiamo metallico ruppe l'incantesimo del sonno ${when}, alle prime luci che non erano ancora luci.`;
-    }
-    if (late) {
-      return `Il richiamo metallico tardò, poi ruppe l'incantesimo del sonno ${when}.`;
-    }
-    return `Il richiamo metallico ruppe l'incantesimo del sonno ${when}.`;
-  }
-
-  if (early) {
-    return `L'impietoso gong decretò la fine della pace ${when}, con un anticipo che sembrava uno scherzo di cattivo gusto.`;
-  }
-  if (late) {
-    return `L'impietoso gong decretò la fine della pace solo ${when}, quando la mattina era già un pettegolezzo.`;
-  }
-  return `L'impietoso gong decretò la fine della pace ${when}.`;
+// «le sette», «l'una», «mezzogiorno»; con «di»: «delle sette», «dell'una», «di mezzogiorno».
+function hourWith(preposition, hour) {
+  const word = HOUR_WORD[hour];
+  if (hour === 0 || hour === 12) return preposition ? `${preposition} ${word}` : word;
+  if (hour === 1) return preposition ? "dell'una" : "l'una";
+  return preposition ? `delle ${word}` : `le ${word}`;
 }
 
 function intensity(minutes) {
@@ -200,58 +312,19 @@ function dominantSlot(slots, field) {
   return bestValue > 0 ? best : null;
 }
 
-function spellbound(gender) {
-  if (gender === "F") return "ipnotizzata";
-  if (gender === "X") return "in stato di ipnosi";
-  return "ipnotizzato";
-}
+const SPAN = {
+  LOW: "per pochi minuti",
+  MODERATE: "a tratti",
+  HIGH: "a lungo",
+  VERY_HIGH: "per gran parte del tempo libero",
+};
 
-function doomClause(genre, level, minutes, gender) {
-  if (level === "NONE") return "";
-  const span =
-    level === "LOW"
-      ? "Per pochi minuti"
-      : level === "MODERATE"
-        ? "A tratti"
-        : level === "HIGH"
-          ? "A lungo"
-          : "Per un tempo che divora le ore";
-  const daze = spellbound(gender);
-
-  if (genre.startsWith("Noir")) {
-    if (gender === "X") {
-      return `${span}, lo sguardo restò fisso sul rettangolo di vetro luminoso, a cercare indizi nelle vite degli altri (${minutes} minuti)`;
-    }
-    return `${span}, restò ${daze} dal rettangolo di vetro luminoso, cercando indizi nelle vite degli altri (${minutes} minuti)`;
-  }
-  if (genre.startsWith("Realismo")) {
-    return `${span}, lo specchio nero tascabile tenne lo sguardo, e vi scorrevano visioni di mondi lontani e irraggiungibili (${minutes} minuti)`;
-  }
-  if (gender === "X") {
-    return `${span}, la tana del bianconiglio si aprì su un carosello infinito di vite altrui (${minutes} minuti)`;
-  }
-  return `${span}, scivolò nella tana del bianconiglio, ${daze} da un carosello infinito di vite altrui (${minutes} minuti)`;
-}
-
-function messageClause(genre, level, minutes) {
-  if (level === "NONE") return "";
-  const span =
-    level === "LOW"
-      ? "Per poco"
-      : level === "MODERATE"
-        ? "A più riprese"
-        : level === "HIGH"
-          ? "A lungo"
-          : "Senza tregua";
-
-  if (genre.startsWith("Noir")) {
-    return `${span}, un fitto scambio di dispacci silenziosi e messaggi cifrati tenne occupate le dita (${minutes} minuti)`;
-  }
-  if (genre.startsWith("Realismo")) {
-    return `${span}, parole invisibili viaggiarono nell'etere e tesserono una ragnatela di conversazioni mute (${minutes} minuti)`;
-  }
-  return `${span}, un ping-pong di botta e risposta a distanza non lasciò tregua ai pollici (${minutes} minuti)`;
-}
+const MOMENT = {
+  SLOT_1_NIGHT: "di notte",
+  SLOT_2_MORNING: "soprattutto la mattina",
+  SLOT_3_AFTERNOON: "soprattutto il pomeriggio",
+  SLOT_4_EVENING: "soprattutto la sera",
+};
 
 export function screenBehavior(genre, slots, gender = "M") {
   const doomMinutes = slots.reduce((sum, slot) => sum + (Number(slot.doomscrolling_minutes) || 0), 0);
@@ -261,18 +334,18 @@ export function screenBehavior(genre, slots, gender = "M") {
   const doomSlot = dominantSlot(slots, "doomscrolling_minutes");
   const messageSlot = dominantSlot(slots, "messaging_minutes");
 
-  const doomClauseText = doomClause(genre, doomLevel, doomMinutes, gender);
-  const messageClauseText = messageClause(genre, messageLevel, messageMinutes);
-  let semantic;
-  if (!doomClauseText && !messageClauseText) {
-    semantic = genre.startsWith("Commedia")
-      ? "Lo specchio nero restò chiuso e nessun dispaccio pretese le dita: la giornata parlò solo di persona."
-      : "Nessuna immersione nello specchio nero e nessun dispaccio a distanza: la giornata restò nel mondo a portata di mano.";
-  } else if (doomClauseText && messageClauseText) {
-    semantic = `${doomClauseText}. ${messageClauseText}.`;
-  } else {
-    semantic = `${doomClauseText || messageClauseText}.`;
+  // Contenuto, non frasi: le metafore pronte («specchio nero tascabile»)
+  // finivano ricopiate identiche in ogni capitolo e in quarta di copertina.
+  const parts = [];
+  if (doomLevel !== "NONE") {
+    parts.push(`scorrimento passivo di immagini e vite altrui ${SPAN[doomLevel]}, ${MOMENT[doomSlot] || ""}`.trim().replace(/,$/, ""));
   }
+  if (messageLevel !== "NONE") {
+    parts.push(`conversazioni scritte a distanza ${SPAN[messageLevel]}, ${MOMENT[messageSlot] || ""}`.trim().replace(/,$/, ""));
+  }
+  const semantic = parts.length
+    ? `Schermo: ${parts.join("; ")}. Dato di contorno, mai un oggetto in scena: vale per ciò che rivela (un desiderio, un'attesa, qualcuno con cui si parla).`
+    : "Schermo quasi spento: la giornata si è vissuta di persona.";
 
   return {
     doomscrolling_level: doomSlot ? `${doomLevel}_${PERIOD[doomSlot]}` : "NONE",
@@ -363,4 +436,137 @@ export function slotWindow(slotId) {
 function lowerFirst(text) {
   if (!text) return "";
   return text.charAt(0).toLowerCase() + text.slice(1);
+}
+
+// --- Correzioni deterministiche e controlli drammaturgici -------------------
+
+const PREP_STEM = { di: "de", de: "de", a: "a", da: "da", in: "ne", ne: "ne", su: "su" };
+const ARTICLE_TAIL = { il: "l", lo: "llo", la: "lla", i: "i", gli: "gli", le: "lle", "l'": "ll'" };
+
+// «de La Casa», «a Il Tavolo», «ne L'Archivio» non esistono in italiano:
+// diventano «della Casa», «al Tavolo», «nell'Archivio». Il modello ci ricade
+// anche quando il prompt lo vieta, quindi si corregge qui, senza un'altra chiamata.
+export function fixPrepositions(text) {
+  return String(text || "").replace(
+    /(^|[^\p{L}'’])(di|de|a|da|in|ne|su|Di|De|A|Da|In|Ne|Su)\s+(Il|Lo|La|I|Gli|Le|L['’])(?=[\s\p{L}])/gu,
+    (match, before, prep, article) => {
+      const stem = PREP_STEM[prep.toLowerCase()];
+      const tail = ARTICLE_TAIL[article.toLowerCase().replace("’", "'")];
+      if (!stem || !tail) return match;
+      const merged = stem + tail;
+      const cased = prep[0] === prep[0].toUpperCase() ? merged[0].toUpperCase() + merged.slice(1) : merged;
+      return `${before}${cased}`;
+    }
+  );
+}
+
+// Gli attrezzi del mestiere non vanno in scena: il lettore deve sentire la
+// svolta, non leggere la parola «svolta».
+const SCAFFOLDING = [
+  /\bl['’]obiettivo (?:era|di)\b/i,
+  /\bl['’]ostacolo\b/i,
+  /\bl['’]esito di\b/i,
+  /\bpunto di svolta\b/i,
+  /\bla svolta\b/i,
+  /\bl['’]innesco\b/i,
+  /\b(?:primo|secondo|terzo) atto\b/i,
+  /\bclimax\b/i,
+  /\bposta in gioco\b/i,
+  /\bl['’]intento era\b/i,
+  /\bprima prova\b/i,
+  /\bl['’]intenzione è\b/i,
+  /\bla meta impone\b/i,
+  /\bla ricerca di [^.]{0,60}si scontra\b/i,
+];
+
+export function findScaffolding(text) {
+  const source = String(text || "");
+  return SCAFFOLDING.map((pattern) => source.match(pattern)?.[0]).filter(Boolean);
+}
+
+// Le voci del profilo («Razionale / Analitico», «L'Atleta / Cinestetico»)
+// sono istruzioni per il tono: se finiscono nella prosa diventano etichette.
+const LABEL_FIELDS = ["emotional_reactivity", "archetype", "narrative_focus"];
+
+export function profileLabelStems(protagonist = {}) {
+  const stems = new Set();
+  for (const field of LABEL_FIELDS) {
+    for (const raw of String(protagonist[field] || "").split(/[^\p{L}]+/u)) {
+      const word = raw.toLowerCase();
+      if (word.length < 6) continue;
+      stems.add(word.slice(0, Math.max(5, word.length - 2)));
+    }
+  }
+  return [...stems];
+}
+
+export function findProfileLabels(text, protagonist) {
+  const words = String(text || "").toLowerCase().split(/[^\p{L}]+/u);
+  const found = new Set();
+  for (const stem of profileLabelStems(protagonist)) {
+    const hit = words.find((word) => word.startsWith(stem));
+    if (hit) found.add(hit);
+  }
+  return [...found];
+}
+
+const WAKE_SOUND = /\b(?:sveglia|richiamo|suono|squillo|trillo|gong|sirena|campanell\w*|allarme)\b/i;
+const WAKE_BREAK = /\b(?:ruppe|interruppe|strapp\w*|squarci\w*|decret\w*|spezz\w*|lacer\w*|risvegli\w*)\b/i;
+
+// Aprire ogni capitolo con «il suono che interrompe il sonno» è la formula
+// più logora del libro: l'incipit deve partire dalla storia, non dalla sveglia.
+export function opensWithWakeUp(text) {
+  const first = String(text || "").trim().split(/(?<=[.!?…])\s/)[0] || "";
+  return WAKE_SOUND.test(first) && WAKE_BREAK.test(first);
+}
+
+const DEVICE = /specchio nero|schermo|tascabil\w*|rettangolo (?:di vetro|luminoso)|oggetto nero/gi;
+
+export function countDeviceMentions(text) {
+  return (String(text || "").match(DEVICE) || []).length;
+}
+
+// Tic di scrittura: la stessa parola piena tre o più volte nel capitolo
+// («geometria», «precisione»). I nomi propri non contano.
+export function findOveruse(text, ignore = []) {
+  const skip = new Set(ignore.flatMap((name) => String(name).toLowerCase().split(/[^\p{L}]+/u)).filter(Boolean));
+  const counts = new Map();
+  for (const raw of String(text || "").split(/[^\p{L}'’]+/u)) {
+    const word = (raw.split(/['’]/).pop() || "").toLowerCase();
+    if (word.length < 7 || skip.has(word) || ECHO_STOPWORDS.has(word)) continue;
+    const stem = word.slice(0, 7);
+    const seen = counts.get(stem);
+    counts.set(stem, { count: (seen?.count || 0) + 1, word: seen?.word || word });
+  }
+  return [...counts.values()].filter((entry) => entry.count >= 3).map((entry) => `${entry.word} ×${entry.count}`);
+}
+
+const SPOKEN_TIME = /\b(?:alle|all['’]una|verso l[ea']|poco (?:prima|dopo) (?:del|dell['’]|di|l)|a mezzogiorno|a mezzanotte|nel primo pomeriggio|nel tardo pomeriggio|in serata|a metà (?:mattina|pomeriggio))/i;
+
+// Cronaca: paragrafi che si aprono con «Nel Luogo, verso le dieci…».
+export function countChronicleParagraphs(text) {
+  return String(text || "")
+    .split(/\n\s*\n/)
+    .filter((paragraph) => SPOKEN_TIME.test(paragraph.trim().slice(0, 70))).length;
+}
+
+export function firstSentence(text) {
+  return (String(text || "").trim().split(/(?<=[.!?…])\s/)[0] || "").slice(0, 200);
+}
+
+const TITLE_STOP = new Set(["della", "delle", "degli", "dello", "nella", "nelle", "sulla", "sulle", "dalla", "dalle", "quando", "senza", "verso", "oltre", "sotto", "sopra", "prima", "dopo", "ancora"]);
+
+function titleWords(title) {
+  return String(title || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .split(/[^a-z]+/)
+    .filter((word) => word.length >= 5 && !TITLE_STOP.has(word));
+}
+
+// Parole piene di un titolo già usate in titoli precedenti («Geometria» tre volte).
+export function titleOverlap(title, usedTitles = []) {
+  const used = new Set(usedTitles.flatMap(titleWords));
+  return [...new Set(titleWords(title).filter((word) => used.has(word)))];
 }

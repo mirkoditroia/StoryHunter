@@ -6,8 +6,10 @@ import { profileFromAnswers } from "./meta.js";
 import {
   applySimulatedTelemetry,
   listScenarios,
+  personalizeSlots,
   scenarioById,
   scenarioIndex,
+  simulatedDay,
   telemetryIsBlank,
 } from "./scenarios.js";
 
@@ -108,14 +110,94 @@ test("le giornate simulate sono coerenti con le fasce orarie", () => {
 });
 
 test("i giorni consecutivi di un ciclo cambiano combinazione", () => {
-  const total = listScenarios().length;
   const ids = [];
+  const order = [];
   for (let day = 1; day <= 7; day += 1) {
-    ids.push(listScenarios()[scenarioIndex("bk_demo", day, 0)].id);
+    const index = scenarioIndex("bk_demo", day, 0);
+    order.push(index);
+    ids.push(listScenarios()[index].id);
   }
   assert.equal(new Set(ids).size, 7);
-  assert.equal(scenarioIndex("bk_demo", 2, 0), (scenarioIndex("bk_demo", 1, 0) + 1) % total);
   assert.equal(scenarioIndex("bk_demo", 1, 3), scenarioIndex("bk_demo", 4, 0));
+  const other = [1, 2, 3, 4, 5, 6, 7].map((day) => scenarioIndex("bk_altro_libro", day, 0));
+  assert.equal(new Set(other).size, 7);
+  assert.notDeepEqual(order, other);
+});
+
+function fingerprint(slots) {
+  return slots
+    .map((slot) =>
+      [
+        slot.weather,
+        slot.wake_time,
+        slot.doomscrolling_minutes,
+        slot.messaging_minutes,
+        ...slot.places.map((place) => `${place.start}-${place.end}-${place.hr_avg}-${place.hr_peak || ""}`),
+      ].join("|")
+    )
+    .join("||");
+}
+
+function assertDayShape(slots, label) {
+  const wakes = [];
+  for (const slot of slots) {
+    const [from, to] = BOUNDS[slot.id];
+    assert.ok(slot.weather && /\d/.test(slot.weather), `${label} meteo`);
+    assert.ok(slot.places.length > 0, `${label} senza tappe`);
+    if (slot.wake_time) {
+      const wake = minutes(slot.wake_time);
+      assert.ok(wake >= from && wake <= to, `${label} sveglia`);
+      wakes.push(slot.wake_time);
+    }
+    let previousEnd = -1;
+    for (const place of slot.places) {
+      assert.ok(KINDS.has(place.kind), place.kind);
+      assert.ok(MOVEMENTS.has(place.movement), place.movement);
+      assert.ok(STRESS.has(place.stress), place.stress);
+      const start = minutes(place.start);
+      const end = minutes(place.end);
+      assert.ok(start >= from && end <= to && start < end, `${label} ${slot.id} ${place.start}-${place.end}`);
+      assert.ok(start >= previousEnd, `${label} tappe sovrapposte`);
+      previousEnd = end;
+      assert.ok(place.hr_avg >= 48 && place.hr_avg <= 160, `${label} hr`);
+      assert.ok(place.spo2 >= 95 && place.spo2 <= 100);
+      if (place.hr_peak) {
+        assert.ok(place.hr_peak > place.hr_avg);
+        const peak = minutes(place.hr_peak_time);
+        assert.ok(peak >= start && peak <= end, `${label} picco`);
+      }
+      if (place.movement === "WALKING") assert.ok(place.hr_avg >= 84, `${label} cammino`);
+      if (place.hr_avg <= 62 && place.kind === "home") assert.equal(place.movement, "STILL");
+    }
+  }
+  assert.equal(wakes.length, 1, `${label} sveglie`);
+}
+
+test("ogni giornata simulata è stabile, diversa dalle altre e dentro le fasce", () => {
+  const prints = [];
+  const ids = [];
+  for (let day = 1; day <= 7; day += 1) {
+    const first = simulatedDay({ bookId: "bk_demo", day });
+    const second = simulatedDay({ bookId: "bk_demo", day });
+    assert.deepEqual(first, second);
+    prints.push(fingerprint(first.slots));
+    ids.push(first.id);
+    assert.match(first.description, /Sveglia alle \d{2}:\d{2}|Nessuna sveglia/);
+    assertDayShape(first.slots, `giorno ${day}`);
+  }
+  assert.equal(new Set(prints).size, 7);
+  assert.equal(new Set(ids).size, 7);
+  const avoided = simulatedDay({ bookId: "bk_demo", day: 1, avoid: [ids[0]] });
+  assert.notEqual(avoided.id, ids[0]);
+  assert.notEqual(fingerprint(simulatedDay({ bookId: "bk_demo", day: 1 }).slots), fingerprint(simulatedDay({ bookId: "bk_altro", day: 1 }).slots));
+
+  for (const scenario of listScenarios()) {
+    for (const seed of ["alfa", "beta", "gamma"]) {
+      const slots = personalizeSlots(scenario.slots, `${scenario.id}:${seed}`);
+      assertDayShape(slots, `${scenario.id}:${seed}`);
+      assert.notEqual(fingerprint(slots), fingerprint(scenario.slots));
+    }
+  }
 });
 
 test("gli slot vuoti del merger vengono sostituiti e gli appunti restano", () => {

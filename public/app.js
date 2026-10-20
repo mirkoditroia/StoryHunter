@@ -1,3 +1,5 @@
+import { simulatedDay } from "/engine/scenarios.js";
+
 const state = {
   meta: null,
   books: [],
@@ -16,6 +18,7 @@ const state = {
   mountedKey: "",
   busy: false,
   motion: "enter-cover",
+  premiere: false,
 };
 
 const BARE_VIEWS = new Set(["cover", "soglia", "conferma"]);
@@ -176,23 +179,23 @@ function selectedTrait(questionId) {
 function homeAliasPreview(genre, metaphorDomain = "") {
   const domain = String(metaphorDomain || "").toLowerCase();
   if (genre.startsWith("Noir")) {
-    if (domain.startsWith("arti")) return "La Camera Oscura";
-    if (domain.startsWith("cucina")) return "La Cucina Fredda";
-    if (domain.startsWith("sport")) return "Lo Stanzino del Corpo";
-    if (domain.startsWith("musica")) return "La Stanza Sorda";
-    return "L'Appartamento in Penombra";
+    if (domain.startsWith("arti")) return "La Casa in Penombra";
+    if (domain.startsWith("cucina")) return "La Casa Fredda";
+    if (domain.startsWith("sport")) return "La Casa del Corpo Stanco";
+    if (domain.startsWith("musica")) return "La Casa Sorda";
+    return "La Casa in Penombra";
   }
   if (genre.startsWith("Realismo")) {
-    if (domain.startsWith("cucina")) return "Il Rifugio delle Spezie";
+    if (domain.startsWith("cucina")) return "La Casa delle Spezie";
     if (domain.startsWith("arti")) return "La Casa delle Finestre Dipinte";
-    if (domain.startsWith("sport")) return "La Stanza che Respira";
+    if (domain.startsWith("sport")) return "La Casa che Respira";
     if (domain.startsWith("musica")) return "La Casa delle Corde Mute";
     return "La Casa dalle Pareti Larghe";
   }
-  if (domain.startsWith("cucina")) return "Il Quartier Generale delle Pentole";
-  if (domain.startsWith("arti")) return "Il Museo Domestico";
-  if (domain.startsWith("sport")) return "La Palestra del Divano";
-  return "Il Quartier Generale del Divano";
+  if (domain.startsWith("cucina")) return "La Casa delle Pentole";
+  if (domain.startsWith("arti")) return "La Casa Museo";
+  if (domain.startsWith("sport")) return "La Casa del Divano";
+  return "La Casa del Divano";
 }
 
 function voiceReady() {
@@ -227,9 +230,18 @@ function isStudioWindow() {
 function go(view, motion = "enter-forward") {
   if (isStudioWindow()) view = "studio";
   else if (view === "slot" || view === "merge") view = "today";
+  if (view !== "volume") state.premiere = false;
   state.view = view;
   state.motion = motion;
   if (view === "today" || (view === "studio" && state.book)) syncStudio();
+  if (view === "volume" && state.book?.closing && state.book.days.some((entry) => entry.chapter?.sealed)) {
+    openBoundBook()
+      .then(() => {
+        if (state.view === "volume") render();
+      })
+      .catch((error) => setBanner("error", error.message));
+    return;
+  }
   render();
 }
 
@@ -264,6 +276,7 @@ function render() {
 
   const genre = state.book?.book_config.genre || state.form.genre;
   document.body.dataset.lens = lensOf(genre);
+  document.body.classList.toggle("is-premiere", Boolean(state.premiere) && state.view === "volume");
   $("#chrome").hidden = BARE_VIEWS.has(state.view);
   renderChrome();
   const html = {
@@ -308,6 +321,7 @@ function render() {
     const last = state.book?.days.at(-1);
     if (last) document.getElementById(`chapter-${last.day}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
+  if (state.view === "volume") armPremiere();
 }
 
 function renderChrome() {
@@ -532,22 +546,6 @@ function renderConferma() {
     </section>`;
 }
 
-function hashSeed(value) {
-  let hash = 2166136261;
-  for (const ch of String(value || "story")) {
-    hash ^= ch.charCodeAt(0);
-    hash = Math.imul(hash, 16777619);
-  }
-  return hash >>> 0;
-}
-
-function scenarioIndex(bookId, day, shift, count) {
-  const total = count || 1;
-  const base = hashSeed(bookId) % total;
-  const delta = (Number(day) || 1) - 1 + (Number(shift) || 0);
-  return ((base + delta) % total + total) % total;
-}
-
 function telemetryBlank(slots) {
   if (!Array.isArray(slots) || slots.length === 0) return true;
   return slots.every((slot) => {
@@ -575,10 +573,14 @@ function notesFromSlotList(slots) {
 }
 
 function currentScenario() {
-  const list = state.meta?.scenarios || [];
-  if (!list.length || !state.book) return null;
-  const day = state.book.book_config.current_day;
-  return list[scenarioIndex(state.book.id, day, state.scenarioShift || 0, list.length)] || null;
+  if (!state.book) return null;
+  const avoid = (state.book.days || []).map((entry) => entry.scenario_id).filter(Boolean);
+  return simulatedDay({
+    bookId: state.book.id,
+    day: state.book.book_config.current_day,
+    shift: state.scenarioShift || 0,
+    avoid,
+  });
 }
 
 function assignScenario(notes = state.notesText) {
@@ -1033,7 +1035,6 @@ function applyPayload(payload) {
 function renderNotebook() {
   const book = state.book;
   if (!book) return "";
-  const last = book.days.at(-1);
   const complete = book.days.length >= book.book_config.total_days;
   return `
     <section class="page">
@@ -1046,7 +1047,7 @@ function renderNotebook() {
           : `<article class="paper"><p>Nessun capitolo, per ora. Chiudi la prima giornata dal taccuino.</p></article>`
       }
       <div class="chapter-list">
-        ${book.days.map((entry) => chapterCard(entry, last && entry.day === last.day)).join("")}
+        ${book.days.map((entry) => chapterCard(entry)).join("")}
       </div>
       <div class="page-nav">
         ${
@@ -1059,7 +1060,7 @@ function renderNotebook() {
     </section>`;
 }
 
-function chapterCard(entry, isLast) {
+function chapterCard(entry) {
   const chapter = entry.chapter;
   if (chapter.sealed) {
     return `
@@ -1070,7 +1071,6 @@ function chapterCard(entry, isLast) {
         <p>Il foglio è chiuso. Puoi aprirlo adesso, o conservarlo per quando il ciclo sarà intero.</p>
         <div class="actions no-print">
           <button type="button" class="solid" data-open-chapter="${entry.day}">Apri il sigillo</button>
-          ${isLast ? `<button type="button" class="ghost" id="rewrite">Riscrivi con ${esc(engineName())}</button>` : ""}
         </div>
       </article>`;
   }
@@ -1082,11 +1082,6 @@ function chapterCard(entry, isLast) {
       ${subtitleLine(chapter.chapter_subtitle)}
       <div class="prose">${prose(chapter.chapter_text)}</div>
       ${warnings ? `<ul class="quiet">${warnings}</ul>` : ""}
-      ${
-        isLast
-          ? `<button type="button" class="ghost no-print" id="rewrite">Riscrivi questo capitolo con ${esc(engineName())}</button>`
-          : ""
-      }
     </article>`;
 }
 
@@ -1109,6 +1104,10 @@ function renderMemory() {
           <p class="eyebrow">Chiusura dell'ultimo capitolo</p>
           <p>${esc(CUTOFF[memory.last_chapter_ending_state] || memory.last_chapter_ending_state)}</p>
           <p>${esc(memory.previous_chapter_summary)}</p>
+          <p class="eyebrow">Filo conduttore</p>
+          <p>${esc(memory.through_line || "Si stabilisce nel primo capitolo.")}</p>
+          <p class="eyebrow">Ritratto</p>
+          <p>${esc(memory.character_portrait || "Si delinea nel primo capitolo.")}</p>
         </article>
         <article class="paper">
           <p class="eyebrow">Luoghi</p>
@@ -1123,6 +1122,14 @@ function renderMemory() {
             ? `<article class="paper">
                 <p class="eyebrow">Ultimo JSON inviato</p>
                 <pre class="json-view">${esc(JSON.stringify(last.payload, null, 2))}</pre>
+                ${
+                  last.chapter?.dramaturgy
+                    ? `<details>
+                        <summary>Copione del drammaturgo per il capitolo ${last.day}</summary>
+                        <pre class="json-view">${esc(JSON.stringify(last.chapter.dramaturgy, null, 2))}</pre>
+                      </details>`
+                    : ""
+                }
                 <details>
                   <summary>Prompt di sistema usato per il capitolo ${last.day}</summary>
                   <pre class="json-view">${esc(last.system_prompt || "Non archiviato.")}</pre>
@@ -1152,32 +1159,53 @@ function renderVolume() {
   }
 
   const closing = book.closing;
-  const sealed = book.days.some((entry) => entry.chapter.sealed);
+  if (!closing) {
+    return `
+      <section class="page">
+        <article class="paper compose-invite">
+          <p class="eyebrow">Volume</p>
+          <h2>Il ciclo è intero.</h2>
+          <p class="lede">Manca solo il frontespizio. Quando il libro è composto, si apre da solo.</p>
+          <button type="button" class="solid" id="compose">Componi il libro</button>
+        </article>
+        ${cycleLinks()}
+      </section>`;
+  }
+  const premiering = state.premiere ? " is-premiering" : " is-open";
   return `
-    <section class="page">
-      <div class="actions no-print" style="margin-bottom: 1rem">
-        <button type="button" class="solid" id="compose">${closing ? "Riscrivi frontespizio e quarta" : "Componi frontespizio e quarta"}</button>
-        ${sealed ? `<button type="button" class="ghost" id="open-all">Spezza i sigilli e mostra il romanzo</button>` : ""}
-        ${closing ? `<button type="button" class="ghost" id="print">Stampa o salva in PDF</button>` : ""}
-      </div>
+    <section class="page volume-premiere${premiering}">
       ${
-        closing
-          ? `<article class="book">
-              <header class="cover-page">
-                <p class="eyebrow">${esc(book.book_config.genre)}</p>
-                <h2>${esc(closing.book_title)}</h2>
-                <p>${esc(closing.subtitle || "")}</p>
+        state.premiere
+          ? `<div class="overture">
+              <div class="overture-inner">
+                <p class="kicker">${esc(book.book_config.genre)}</p>
+                <h2 class="overture-title">${esc(closing.book_title)}</h2>
+                <div class="overture-rule" aria-hidden="true"></div>
+                <p class="overture-sub">${esc(closing.subtitle || "")}</p>
                 <p class="epigraph">${esc(closing.epigraph || "")}</p>
-                <p class="quiet">${esc(book.book_config.protagonist.name)}</p>
-              </header>
-              ${book.days.map((entry) => volumeChapter(entry)).join("")}
-              <section class="back-cover">
-                <p class="eyebrow">Quarta</p>
-                <div class="prose">${prose(closing.back_cover)}</div>
-              </section>
-            </article>`
-          : `<article class="paper"><p>I capitoli ci sono. Manca ancora il frontespizio: lo chiede ${esc(engineName())} all'arco intero.</p></article>`
+                <p class="overture-name">${esc(book.book_config.protagonist.name)}</p>
+                <p class="overture-hint">Tocca per aprire il libro</p>
+              </div>
+            </div>`
+          : ""
       }
+      <article class="book cinema-book">
+        <header class="cover-page cinema-cover">
+          <p class="eyebrow">${esc(book.book_config.genre)}</p>
+          <h2>${esc(closing.book_title)}</h2>
+          <p class="cinema-subtitle">${esc(closing.subtitle || "")}</p>
+          <p class="epigraph">${esc(closing.epigraph || "")}</p>
+          <p class="cinema-by">${esc(book.book_config.protagonist.name)}</p>
+        </header>
+        ${book.days.map((entry) => volumeChapter(entry)).join("")}
+        <section class="back-cover cinema-back">
+          <p class="eyebrow">Quarta di copertina</p>
+          <div class="prose">${prose(closing.back_cover)}</div>
+        </section>
+      </article>
+      <div class="volume-tools no-print">
+        <button type="button" class="ghost" id="print">Stampa o salva in PDF</button>
+      </div>
       ${cycleLinks()}
     </section>`;
 }
@@ -1185,19 +1213,44 @@ function renderVolume() {
 function volumeChapter(entry) {
   if (entry.chapter.sealed) {
     return `
-      <section class="sheet" style="margin-top: 1rem">
+      <section class="volume-leaf">
         <div class="seal">${roman(entry.day)}</div>
         <h3>Capitolo ${roman(entry.day)}</h3>
         <p>Ancora sigillato.</p>
       </section>`;
   }
   return `
-    <section style="margin-top: 1.6rem">
-      <p class="quiet">Capitolo ${roman(entry.day)}</p>
+    <section class="volume-leaf">
+      <p class="chapter-index">Capitolo ${roman(entry.day)}</p>
       <h3>${esc(entry.chapter.chapter_title)}</h3>
       ${subtitleLine(entry.chapter.chapter_subtitle)}
       <div class="prose">${prose(entry.chapter.chapter_text)}</div>
     </section>`;
+}
+
+function armPremiere() {
+  const root = document.querySelector(".volume-premiere.is-premiering");
+  if (!root || root.dataset.armed) return;
+  root.dataset.armed = "true";
+  let done = false;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    state.premiere = false;
+    document.body.classList.remove("is-premiere");
+    root.classList.remove("is-premiering");
+    root.classList.add("is-open");
+    root.querySelector(".overture")?.remove();
+  };
+  root.querySelector(".overture")?.addEventListener("click", finish);
+  window.setTimeout(finish, prefersReducedMotion() ? 40 : 5400);
+}
+
+async function openBoundBook() {
+  const book = state.book;
+  if (!book?.closing || !book.days.some((entry) => entry.chapter?.sealed)) return;
+  const result = await api(`/api/books/${book.id}/open-all`, { method: "POST", body: {} });
+  if (state.book?.id === book.id) state.book = result.book;
 }
 
 function applyProfile(profile) {
@@ -1336,7 +1389,11 @@ async function generate(body, busyText) {
   try {
     const result = await api(`/api/books/${state.book.id}/generate`, {
       method: "POST",
-      body,
+      body: {
+        ...body,
+        scenario_id: body.scenario_id || state.scenarioId || "",
+        shift: state.scenarioShift || 0,
+      },
       signal: typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
         ? AbortSignal.timeout(150000)
         : undefined,
@@ -1743,33 +1800,25 @@ async function onClick(event) {
     await mutateBook(`/api/books/${state.book.id}/chapters/${openChapter.dataset.openChapter}/open`, "notebook");
     return;
   }
-  if (event.target.closest("#open-all")) {
-    await mutateBook(`/api/books/${state.book.id}/open-all`, "volume");
-    return;
-  }
-  if (event.target.closest("#rewrite")) {
-    if (!confirm(`${engineName()} riscrive l'ultimo capitolo e lo sigilla di nuovo. La memoria torna a prima di quel giorno.`)) return;
-    await generate({ regenerate: true }, `${engineName()} sta riscrivendo l'ultimo capitolo.`);
-    return;
-  }
   if (event.target.closest("#compose")) {
     if (!state.meta.llm.configured) {
       setBanner("error", `Manca la chiave API ${engineName()}.`);
       $("#settings").showModal();
       return;
     }
-    setBusy(`${engineName()} sta componendo frontespizio e quarta…`);
+    setBusy("Il libro si sta componendo.");
     try {
       const result = await api(`/api/books/${state.book.id}/close`, {
         method: "POST",
-        body: { force: Boolean(state.book.closing) },
+        body: {},
         signal: typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
           ? AbortSignal.timeout(120000)
           : undefined,
       });
       state.book = result.book;
+      state.premiere = true;
+      setBanner("", "");
       go("volume", "enter-forward");
-      setBanner("ok", `Il volume si intitola «${result.book.closing.book_title}».`);
     } catch (error) {
       setBanner("error", error.message);
     } finally {

@@ -133,7 +133,12 @@ app.post("/api/books/:id/merge", async (req, res, next) => {
     const book = await requireBook(req.params.id);
     const day = assertOpenDay(book);
     const date = validDate(req.body?.date) || dateForDay(book.started_on, day);
-    const slots = applySimulatedTelemetry(req.body?.slots, { bookId: book.id, day });
+    const slots = applySimulatedTelemetry(req.body?.slots, {
+      bookId: book.id,
+      day,
+      shift: Number(req.body?.shift) || 0,
+      avoid: book.days.map((entry) => entry.scenario_id).filter(Boolean),
+    });
     const payload = mergeDay({ book, day, date, slots });
     book.draft = { day, date, slots };
     await saveBook(book);
@@ -178,7 +183,12 @@ app.post("/api/books/:id/generate", async (req, res, next) => {
         };
       }
     } else {
-      slots = applySimulatedTelemetry(req.body?.slots, { bookId: book.id, day });
+      slots = applySimulatedTelemetry(req.body?.slots, {
+        bookId: book.id,
+        day,
+        shift: Number(req.body?.shift) || 0,
+        avoid: book.days.map((entry) => entry.scenario_id).filter(Boolean),
+      });
       payload = mergeDay({ book, day, date, slots });
     }
 
@@ -188,6 +198,7 @@ app.post("/api/books/:id/generate", async (req, res, next) => {
     book.days.push({
       day,
       date: payload.today_unified_telemetry.date || date,
+      scenario_id: cleanScenarioId(req.body?.scenario_id),
       slots,
       payload,
       source,
@@ -197,6 +208,7 @@ app.post("/api/books/:id/generate", async (req, res, next) => {
         chapter_title: written.chapter_title,
         chapter_subtitle: written.chapter_subtitle,
         chapter_text: written.chapter_text,
+        dramaturgy: written.dramaturgy,
         sealed: true,
         opened_at: null,
         words: written.words,
@@ -263,11 +275,13 @@ app.post("/api/books/:id/close", async (req, res, next) => {
       throw new HttpError(400, "Il volume si compone quando tutti i giorni hanno un capitolo.");
     }
     if (book.closing && !req.body?.force) {
+      if (unsealChapters(book)) await saveBook(book);
       res.json({ book });
       return;
     }
     const closing = await composeVolume(book);
     book.closing = { ...closing, generated_at: new Date().toISOString() };
+    unsealChapters(book);
     await saveBook(book);
     res.json({ book });
   } catch (error) {
@@ -289,6 +303,11 @@ app.get("/api/sample-payload", (_req, res) => {
 
 app.use("/api", (_req, res) => {
   res.status(404).json({ error: "Endpoint non trovato." });
+});
+
+app.get("/engine/scenarios.js", (_req, res) => {
+  res.type("application/javascript; charset=utf-8");
+  res.sendFile(path.join(root, "server", "scenarios.js"));
 });
 
 app.use(express.static(publicDir));
@@ -343,6 +362,7 @@ async function regenerateLast(book) {
       chapter_title: written.chapter_title,
       chapter_subtitle: written.chapter_subtitle,
       chapter_text: written.chapter_text,
+      dramaturgy: written.dramaturgy,
       sealed: true,
       opened_at: null,
       words: written.words,
@@ -366,6 +386,23 @@ async function regenerateLast(book) {
 
 function validDate(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value || "") ? value : "";
+}
+
+function cleanScenarioId(value) {
+  const id = String(value || "").trim();
+  return /^[a-z0-9_]{1,80}$/.test(id) ? id : "";
+}
+
+function unsealChapters(book) {
+  const now = new Date().toISOString();
+  let opened = false;
+  for (const entry of book.days || []) {
+    if (!entry.chapter?.sealed) continue;
+    entry.chapter.sealed = false;
+    entry.chapter.opened_at = now;
+    opened = true;
+  }
+  return opened;
 }
 
 await ensureData();

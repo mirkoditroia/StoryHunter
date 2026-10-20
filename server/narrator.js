@@ -1,17 +1,42 @@
 import { DEFAULT_MODEL, providerOf, resolveModel } from "./meta.js";
 import { HttpError } from "./errors.js";
-import { findBanned, findMeasures } from "./transfiguration.js";
+import {
+  countChronicleParagraphs,
+  countDeviceMentions,
+  countHeartbeats,
+  countTimeLedParagraphs,
+  findBanned,
+  findDetailHype,
+  findEchoes,
+  findMeasures,
+  findOveruse,
+  findProfileLabels,
+  findProvisionalLeaks,
+  findScaffolding,
+  findWakeCliches,
+  firstSentence,
+  fixPrepositions,
+  isInventedTradeName,
+  isProvisionalAlias,
+  opensWithWakeUp,
+  titleOverlap,
+} from "./transfiguration.js";
 import {
   buildClosingPrompt,
   buildExpansionPrompt,
   buildMeasurePrompt,
+  buildPlanPrompt,
   buildRepairPrompt,
+  buildStylePrompt,
   buildSystemPrompt,
   buildUserPrompt,
 } from "./prompts.js";
+import { hasStrongEvent, lastSceneOf } from "./dramaturgy.js";
 import { readSettings } from "./store.js";
 
 const ENDINGS = new Set(["AT_HOME_RESTING", "OUTSIDE_CLIFFHANGER", "OUTSIDE_AWAY"]);
+// Sotto questa soglia tre atti con scene vere non ci stanno: si chiede un'espansione.
+const MIN_WORDS = 450;
 
 export async function llmStatus() {
   const settings = await readSettings();
@@ -39,28 +64,60 @@ export async function llmStatus() {
 }
 
 export async function writeChapter(payload) {
-  const system = buildSystemPrompt(payload);
-  const first = await askJson(
-    [
-      { role: "system", content: system },
-      { role: "user", content: buildUserPrompt(payload) },
-    ],
-    0.85,
-    7000
+  const warnings = [];
+  const context = styleContext(payload);
+
+  // 1. Il Drammaturgo progetta il capitolo. Se fallisce, il Narratore scrive
+  //    lo stesso, pianificando da sé (peggio, ma il capitolo arriva).
+  let plan = null;
+  try {
+    const planPrompt = buildPlanPrompt(payload);
+    const rawPlan = await askJson(
+      [
+        { role: "system", content: planPrompt.system },
+        { role: "user", content: planPrompt.user },
+      ],
+      { temperature: 0.9, maxTokens: 6000, think: true }
+    );
+    plan = normalizePlan(rawPlan, payload);
+    if (!plan) warnings.push("Il copione del drammaturgo era incompleto: capitolo scritto senza copione.");
+  } catch (error) {
+    warnings.push(`Copione non riuscito: ${error.message}`);
+  }
+
+  // 2. Il Narratore scrive seguendo il copione.
+  const system = buildSystemPrompt(payload, plan);
+  const ask = (user, temperature) =>
+    askJson(
+      [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      { temperature, maxTokens: 8000 }
+    );
+
+  // La prima stesura ragiona un poco (rispetta meglio copione e misura);
+  // le riparazioni restano veloci.
+  let draft = normalizeDraft(
+    await askJson(
+      [
+        { role: "system", content: system },
+        { role: "user", content: buildUserPrompt(payload) },
+      ],
+      { temperature: 0.85, maxTokens: 9000, think: true }
+    ),
+    payload
   );
 
-  let draft = normalizeDraft(first, payload);
-  const warnings = [];
-
-  if (countWords(draft.chapter_text) < 750) {
+  // 3. Riparazioni mirate, una per famiglia di problemi.
+  if (countWords(draft.chapter_text) < MIN_WORDS) {
     try {
       const expanded = await askJson(
         [
           { role: "system", content: system },
           { role: "user", content: buildExpansionPrompt(payload, draft) },
         ],
-        0.7,
-        7000
+        { temperature: 0.75, maxTokens: 9000, think: true }
       );
       const next = normalizeDraft(expanded, payload);
       if (countWords(next.chapter_text) > countWords(draft.chapter_text)) draft = next;
@@ -72,56 +129,62 @@ export async function writeChapter(payload) {
   const banned = bannedInDraft(draft);
   if (banned.length) {
     try {
-      const repaired = await askJson(
-        [
-          { role: "system", content: system },
-          { role: "user", content: buildRepairPrompt(payload, draft, banned) },
-        ],
-        0.4,
-        7000
-      );
-      draft = normalizeDraft(repaired, payload);
+      draft = normalizeDraft(await ask(buildRepairPrompt(payload, draft, banned), 0.4), payload);
     } catch (error) {
       warnings.push(`Pulizia del lessico non riuscita: ${error.message}`);
     }
   }
-
   const stillBanned = bannedInDraft(draft);
-  if (stillBanned.length) {
-    warnings.push(`Restano parole da non pubblicare: ${stillBanned.join(", ")}.`);
-  }
+  if (stillBanned.length) warnings.push(`Restano parole da non pubblicare: ${stillBanned.join(", ")}.`);
 
   const measures = measuresInDraft(draft);
   if (measures.length) {
     try {
-      const repaired = await askJson(
-        [
-          { role: "system", content: system },
-          { role: "user", content: buildMeasurePrompt(payload, draft, measures) },
-        ],
-        0.4,
-        7000
-      );
-      draft = normalizeDraft(repaired, payload);
+      draft = normalizeDraft(await ask(buildMeasurePrompt(payload, draft, measures), 0.4), payload);
     } catch (error) {
       warnings.push(`Trasfigurazione delle misure non riuscita: ${error.message}`);
     }
   }
-
   const stillMeasured = measuresInDraft(draft);
-  if (stillMeasured.length) {
-    warnings.push(`Restano misure da non leggere come bollettino: ${stillMeasured.join(", ")}.`);
+  if (stillMeasured.length) warnings.push(`Restano misure da non leggere come bollettino: ${stillMeasured.join(", ")}.`);
+
+  const styleIssues = styleIssuesInDraft(draft, context);
+  if (styleIssues.length) {
+    try {
+      const repaired = normalizeDraft(await ask(buildStylePrompt(payload, draft, styleIssues), 0.5), payload);
+      // Una correzione di stile non deve mutilare il capitolo.
+      if (countWords(repaired.chapter_text) >= Math.min(MIN_WORDS, countWords(draft.chapter_text) * 0.85)) draft = repaired;
+    } catch (error) {
+      warnings.push(`Correzione di stile non riuscita: ${error.message}`);
+    }
   }
-  if (countWords(draft.chapter_text) < 800) {
-    warnings.push(`Il capitolo è di ${countWords(draft.chapter_text)} parole, sotto le 800 richieste.`);
+  const remainingStyle = styleIssuesInDraft(draft, context);
+  if (remainingStyle.length) warnings.push(`Restano problemi di stile: ${remainingStyle.join("; ")}.`);
+  if (countWords(draft.chapter_text) < MIN_WORDS) {
+    warnings.push(`Il capitolo è di ${countWords(draft.chapter_text)} parole, corto per tre atti (minimo ${MIN_WORDS}).`);
   }
+
+  // 4. Memoria del romanzo: ciò che restituisce il modello, più ciò che il codice sa meglio.
+  const state = forceEnding(draft.updated_story_state, payload);
+  const memory = payload.story_state_memory || {};
+  adoptPlannedPlaces(state, plan);
+  // Il filo resta provvisorio finché la vita non offre un evento forte
+  // (l'incidente scatenante); da lì non si riscrive più.
+  state.through_line = memory.through_line_locked
+    ? memory.through_line
+    : plan?.through_line || memory.through_line || state.through_line || "";
+  state.through_line_locked = Boolean(memory.through_line_locked || (state.through_line && hasStrongEvent(payload)));
+  state.used_titles = [...(memory.used_titles || []), draft.chapter_title].filter(Boolean).slice(-12);
+  state.openings = [...(memory.openings || []), firstSentence(draft.chapter_text)].filter(Boolean).slice(-4);
+  state.last_scene = lastSceneOf(payload, state.established_locations);
 
   const status = await llmStatus();
   return {
     chapter_title: draft.chapter_title,
     chapter_subtitle: draft.chapter_subtitle,
     chapter_text: draft.chapter_text,
-    state: forceEnding(draft.updated_story_state, payload),
+    dramaturgy: plan,
+    state,
     words: countWords(draft.chapter_text),
     model: status.model,
     warnings,
@@ -129,22 +192,97 @@ export async function writeChapter(payload) {
   };
 }
 
+function styleContext(payload) {
+  const scenes = payload.today_unified_telemetry?.unified_scenes || [];
+  return {
+    currentDay: Number(payload.book_config?.current_day) || 1,
+    protagonist: payload.book_config?.protagonist || null,
+    usedTitles: payload.story_state_memory?.used_titles || [],
+    places: [
+      ...Object.values(payload.story_state_memory?.established_locations || {}),
+      ...scenes.map((scene) => scene.location_alias),
+    ],
+    peakAtRest: scenes.some((scene) => /tachicardia da fermo/i.test(scene.biometric_vibe || "")),
+  };
+}
+
+// Il copione serve solo se ha le parti che reggono il dramma.
+export function normalizePlan(raw, payload) {
+  if (!raw || typeof raw !== "object") return null;
+  const text = (value, max = 400) => clean(fixPrepositions(value), max);
+  const scenes = Array.isArray(raw.atto_2?.scene) ? raw.atto_2.scene : [];
+  const plan = {
+    through_line: text(raw.through_line),
+    desiderio: text(raw.desiderio),
+    paura: text(raw.paura),
+    nuovi_luoghi: {},
+    atto_1: pick(raw.atto_1, ["apertura", "luogo", "momento", "ritratto", "innesco"], text),
+    atto_2: {
+      scene: scenes
+        .slice(0, 3)
+        .map((scene) => pick(scene, ["luogo", "momento", "obiettivo", "ostacolo", "gesto", "pensiero", "esito"], text)),
+      svolta: text(raw.atto_2?.svolta),
+    },
+    atto_3: pick(raw.atto_3, ["luogo", "momento", "culmine", "domanda_finale"], text),
+    immagini: stringList(raw.immagini).slice(0, 2),
+    titolo: text(raw.titolo, 140),
+    sottotitolo: text(raw.sottotitolo, 180),
+  };
+  const ids = new Set((payload.today_unified_telemetry?.unified_scenes || []).map((scene) => scene.location_id));
+  if (raw.nuovi_luoghi && typeof raw.nuovi_luoghi === "object") {
+    for (const [id, value] of Object.entries(raw.nuovi_luoghi)) {
+      const name = clean(value, 120);
+      // Mestieri non documentati («Officina», «Ufficio») non diventano nomi di luogo.
+      if (ids.has(id) && name && !isProvisionalAlias(name) && !isInventedTradeName(name)) plan.nuovi_luoghi[id] = name;
+    }
+  }
+  const usable = plan.desiderio && plan.atto_2.scene.length >= 1 && plan.atto_3.domanda_finale;
+  return usable ? plan : null;
+}
+
+function pick(source, keys, transform) {
+  const out = {};
+  for (const key of keys) {
+    const value = transform(source?.[key]);
+    if (value) out[key] = value;
+  }
+  return out;
+}
+
+// Se il Narratore dimentica di registrare un nome scelto dal copione, lo si registra qui.
+function adoptPlannedPlaces(state, plan) {
+  if (!plan?.nuovi_luoghi) return;
+  const known = state.established_locations || {};
+  for (const [id, name] of Object.entries(plan.nuovi_luoghi)) {
+    if (!known[id] || isProvisionalAlias(known[id])) known[id] = name;
+  }
+  state.established_locations = known;
+}
+
 export async function composeVolume(book) {
   const prompts = buildClosingPrompt(book);
-  const raw = await askJson(
-    [
-      { role: "system", content: prompts.system },
-      { role: "user", content: prompts.user },
-    ],
-    0.8,
-    2500
-  );
-  const closing = {
-    book_title: clean(raw.book_title, 140) || "Senza titolo",
-    subtitle: clean(raw.subtitle, 180),
-    epigraph: clean(raw.epigraph, 280),
-    back_cover: clean(raw.back_cover, 2500),
-  };
+  const messages = [
+    { role: "system", content: prompts.system },
+    { role: "user", content: prompts.user },
+  ];
+  let closing = closingFrom(await askJson(messages, { temperature: 0.8, maxTokens: 4000 }));
+  // Il titolo del libro non può essere il titolo di un capitolo.
+  const chapterTitles = book.days.map((day) => String(day.chapter?.chapter_title || "").trim().toLowerCase());
+  if (chapterTitles.includes(closing.book_title.trim().toLowerCase())) {
+    const retry = closingFrom(
+      await askJson(
+        [
+          ...messages,
+          {
+            role: "user",
+            content: `«${closing.book_title}» è già il titolo di un capitolo. Rifai il JSON con un book_title nuovo, nato dal filo conduttore, senza parole piene dei titoli dei capitoli.`,
+          },
+        ],
+        { temperature: 0.9, maxTokens: 4000 }
+      )
+    );
+    if (!chapterTitles.includes(retry.book_title.trim().toLowerCase())) closing = retry;
+  }
   const banned = findBanned(Object.values(closing).join("\n"));
   if (banned.length) {
     throw new HttpError(502, `Il frontespizio contiene parole vietate (${banned.join(", ")}). Riprova.`);
@@ -155,15 +293,29 @@ export async function composeVolume(book) {
   return closing;
 }
 
-async function askJson(messages, temperature, maxTokens) {
+function closingFrom(raw) {
+  return {
+    book_title: clean(fixPrepositions(raw?.book_title), 140) || "Senza titolo",
+    subtitle: clean(fixPrepositions(raw?.subtitle), 180),
+    epigraph: clean(fixPrepositions(raw?.epigraph), 280),
+    back_cover: clean(fixPrepositions(raw?.back_cover), 2500),
+  };
+}
+
+// think: un po' di ragionamento in più, per il Drammaturgo; la prosa resta veloce.
+async function askJson(messages, { temperature = 0.8, maxTokens = 7000, think = false } = {}) {
   const client = await clientOrThrow();
   const content = client.provider === "google"
-    ? await askGoogle(client, messages, temperature, maxTokens)
-    : await askOpenAI(client, messages, temperature, maxTokens);
+    ? await askGoogle(client, messages, temperature, maxTokens, think)
+    : await askOpenAI(client, messages, temperature, maxTokens, think);
   return parseModelJson(content, client.provider === "google" ? "Google" : "OpenAI");
 }
 
-async function askOpenAI({ apiKey, model }, messages, temperature, maxTokens) {
+async function askOpenAI({ apiKey, model }, messages, temperature, maxTokens, think) {
+  // I modelli GPT-5 ragionano e accettano solo la temperatura predefinita.
+  const tuning = model.startsWith("gpt-5")
+    ? { reasoning_effort: think ? "low" : "minimal" }
+    : { temperature };
   const response = await llmFetch("https://api.openai.com/v1/chat/completions", {
     vendor: "OpenAI",
     headers: {
@@ -172,7 +324,7 @@ async function askOpenAI({ apiKey, model }, messages, temperature, maxTokens) {
     },
     body: {
       model,
-      temperature,
+      ...tuning,
       max_completion_tokens: maxTokens,
       response_format: { type: "json_object" },
       messages,
@@ -189,7 +341,7 @@ async function askOpenAI({ apiKey, model }, messages, temperature, maxTokens) {
   return data?.choices?.[0]?.message?.content;
 }
 
-async function askGoogle({ apiKey, model }, messages, temperature, maxTokens) {
+async function askGoogle({ apiKey, model }, messages, temperature, maxTokens, think) {
   const system = messages.filter((message) => message.role === "system").map((message) => message.content).join("\n\n");
   const contents = messages
     .filter((message) => message.role !== "system")
@@ -203,9 +355,9 @@ async function askGoogle({ apiKey, model }, messages, temperature, maxTokens) {
   };
   if (model.startsWith("gemini-2.")) {
     generationConfig.temperature = temperature;
-    generationConfig.thinkingConfig = { thinkingBudget: 0 };
+    generationConfig.thinkingConfig = { thinkingBudget: think ? 2048 : 0 };
   } else {
-    generationConfig.thinkingConfig = { thinkingLevel: "minimal" };
+    generationConfig.thinkingConfig = { thinkingLevel: think ? "low" : "minimal" };
   }
 
   const response = await llmFetch(
@@ -340,11 +492,16 @@ function normalizeDraft(raw, payload) {
   const text = String(source?.chapter_text || "").trim();
   if (!text) throw new HttpError(502, "Manca il testo del capitolo.");
   const previous = payload.story_state_memory || {};
+  // Le preposizioni davanti ai nomi propri («de La Casa», «a Il Tavolo») si
+  // correggono qui: è un errore ricorrente e non vale una chiamata in più.
+  const state = sanitizeState(source.updated_story_state, previous);
+  state.previous_chapter_summary = fixPrepositions(state.previous_chapter_summary);
+  state.character_portrait = fixPrepositions(state.character_portrait);
   return {
-    chapter_title: clean(source.chapter_title, 140) || `Capitolo ${payload.book_config.current_day}`,
-    chapter_subtitle: clean(source.chapter_subtitle, 180),
-    chapter_text: text,
-    updated_story_state: sanitizeState(source.updated_story_state, previous),
+    chapter_title: clean(fixPrepositions(source.chapter_title), 140) || `Capitolo ${payload.book_config.current_day}`,
+    chapter_subtitle: clean(fixPrepositions(source.chapter_subtitle), 180),
+    chapter_text: fixPrepositions(text),
+    updated_story_state: state,
   };
 }
 
@@ -358,17 +515,37 @@ export function sanitizeState(incoming, previous) {
   for (const [key, value] of Object.entries(nextLocations)) {
     if (!/^loc_[a-z0-9_]+$/.test(key)) continue;
     const alias = clean(value, 160);
-    if (alias) established[key] = alias;
+    if (!alias) continue;
+    // Un alias provvisorio non è un nome: non si archivia mai come battesimo.
+    if (isProvisionalAlias(alias)) continue;
+    // Né un mestiere inventato: il luogo resta da battezzare domani.
+    if (isInventedTradeName(alias)) continue;
+    // Un nome già battezzato è immutabile: si può solo battezzare un luogo
+    // nuovo o sostituire un alias ancora provvisorio («Luogo sconosciuto»).
+    if (established[key] && !isProvisionalAlias(established[key])) continue;
+    established[key] = alias;
   }
 
   let ending = source.last_chapter_ending_state;
   if (!ENDINGS.has(ending)) ending = previous?.last_chapter_ending_state || "AT_HOME_RESTING";
 
+  const locationNames = new Set(Object.values(established).map((name) => name.toLowerCase()));
   return {
+    // Filo e ritratto attraversano il romanzo: se il modello li omette, restano quelli di ieri.
+    through_line: clean(source.through_line, 400) || previous?.through_line || "",
+    character_portrait: clean(source.character_portrait, 800) || previous?.character_portrait || "",
+    // Memoria tenuta dal codice (titoli, aperture, ultima scena), mai dal modello.
+    used_titles: stringList(previous?.used_titles),
+    openings: stringList(previous?.openings),
+    last_scene: previous?.last_scene || null,
+    through_line_locked: Boolean(previous?.through_line_locked),
     previous_chapter_summary: clean(source.previous_chapter_summary, 2500) || previous?.previous_chapter_summary || "",
     last_chapter_ending_state: ending,
     established_locations: established,
-    recurring_motifs: stringList(source.recurring_motifs),
+    // I nomi dei luoghi non sono motivi: stanno già nella mappa.
+    recurring_motifs: stringList(source.recurring_motifs).filter(
+      (motif) => !locationNames.has(motif.toLowerCase())
+    ),
     unresolved_tensions: stringList(source.unresolved_tensions),
   };
 }
@@ -379,6 +556,77 @@ function forceEnding(state, payload) {
   else if (cutoff === "OUTSIDE_AWAY") state.last_chapter_ending_state = "OUTSIDE_AWAY";
   else if (cutoff === "AT_HOME_RESTING") state.last_chapter_ending_state = "AT_HOME_RESTING";
   return state;
+}
+
+// context: { currentDay, protagonist, usedTitles } — un numero vale come currentDay.
+export function styleIssuesInDraft(draft, context = {}) {
+  const { currentDay = 1, protagonist = null, usedTitles = [], places = [], peakAtRest = true } =
+    context && typeof context === "object" ? context : { currentDay: context };
+  const issues = [];
+  const words = countWords(draft.chapter_text);
+  if (words > 880) {
+    issues.push(`capitolo di ${words} parole oltre il tetto di 800: comprimi routine, meteo e descrizioni, non le scene dell'Atto II`);
+  }
+  const heartbeats = countHeartbeats([draft.chapter_subtitle, draft.chapter_text].join("\n"));
+  if (heartbeats > 0 && !peakAtRest) {
+    issues.push("il battito compare ma oggi non c'è nessun picco a corpo fermo: toglilo");
+  } else if (heartbeats > 1) {
+    issues.push(`il battito è citato ${heartbeats} volte nel capitolo (cuore, battito, polso, pulsazioni): massimo una, solo se decisiva`);
+  }
+  const echoes = findEchoes(draft.chapter_text);
+  if (echoes.length) {
+    issues.push(`parole ripetute nella stessa frase: ${echoes.join(", ")}`);
+  }
+  const hype = findDetailHype([draft.chapter_title, draft.chapter_subtitle, draft.chapter_text].join("\n"));
+  if (hype.length) {
+    issues.push(`dettaglio di un appunto celebrato o ripetuto come tormentone: ${hype.join(", ")}`);
+  }
+  const leaks = findProvisionalLeaks(draft.chapter_text);
+  if (leaks.length) {
+    issues.push(`luoghi non battezzati: la prosa usa descrizioni provvisorie (${leaks.join(", ")}) invece di nomi propri`);
+  }
+  const timeLed = countTimeLedParagraphs(draft.chapter_text);
+  if (timeLed > 2) {
+    issues.push(`${timeLed} paragrafi cominciano con un'ora: massimo 2, gli orari vanno dentro le frasi`);
+  }
+  if (Number(currentDay) > 1) {
+    const cliches = findWakeCliches(draft.chapter_text);
+    if (cliches.length) {
+      issues.push(`apertura ricopiata dai capitoli precedenti: ${cliches.join(", ")}`);
+    }
+  }
+  if (opensWithWakeUp(draft.chapter_text)) {
+    issues.push("il capitolo si apre con il risveglio: comincia invece dall'immagine d'apertura del copione");
+  }
+  const scaffolding = findScaffolding(draft.chapter_text);
+  if (scaffolding.length) {
+    issues.push(`parole del mestiere nella prosa (${scaffolding.join(", ")}): fai sentire la cosa con un gesto o un pensiero`);
+  }
+  if (protagonist) {
+    const labels = findProfileLabels([draft.chapter_title, draft.chapter_text].join("\n"), protagonist);
+    if (labels.length) issues.push(`etichette del profilo nella prosa (${labels.join(", ")}): mostrale in azioni`);
+  }
+  const devices = countDeviceMentions(draft.chapter_text);
+  if (devices > 0) {
+    issues.push(`lo schermo compare come oggetto in scena (${devices} volte): conta solo ciò che rivela, senza nominarlo`);
+  }
+  const overused = findOveruse(draft.chapter_text, [protagonist?.name, ...places].filter(Boolean));
+  if (overused.length) {
+    issues.push(`parole ripetute come un tic nel capitolo (${overused.join(", ")}): varia o togli`);
+  }
+  const chronicle = countChronicleParagraphs(draft.chapter_text);
+  if (chronicle > 2) {
+    issues.push(`${chronicle} paragrafi si aprono con luogo e ora come un diario: entra nelle scene da un'azione o un pensiero`);
+  }
+  const incipit = String(draft.chapter_text || "").split(/\n\s*\n/).slice(0, 2).join(" ");
+  if (Number(currentDay) <= 1 && protagonist?.age && !/\banni\b/i.test(incipit)) {
+    issues.push(`primo capitolo senza l'età del protagonista nell'incipit: ${protagonist.age} anni, dentro un gesto`);
+  }
+  const recycled = titleOverlap(draft.chapter_title, usedTitles);
+  if (recycled.length) {
+    issues.push(`il titolo ricicla parole di titoli precedenti (${recycled.join(", ")}): trovane uno nuovo, dalla svolta di oggi`);
+  }
+  return issues;
 }
 
 function measuresInDraft(draft) {
@@ -395,6 +643,8 @@ function draftBlob(draft) {
     draft.chapter_subtitle,
     draft.chapter_text,
     draft.updated_story_state.previous_chapter_summary,
+    draft.updated_story_state.through_line,
+    draft.updated_story_state.character_portrait,
     ...(draft.updated_story_state.recurring_motifs || []),
     ...(draft.updated_story_state.unresolved_tensions || []),
     ...Object.values(draft.updated_story_state.established_locations || {}),

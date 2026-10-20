@@ -28,7 +28,7 @@ function book(overrides = {}) {
   };
 }
 
-test("la giornata vuota resta in casa, senza note, con lo specchio nero alto", () => {
+test("la giornata vuota resta in casa, senza note, con lo schermo alto", () => {
   const payload = mergeDay({
     book: book(),
     day: 1,
@@ -44,9 +44,10 @@ test("la giornata vuota resta in casa, senza note, con lo specchio nero alto", (
   assert.equal(today.unified_scenes.some((scene) => scene.user_notes.length), false);
   assert.equal(containsBanned(today.screen_behavior_summary.semantic_translation), false);
   assert.equal(containsBanned(today.wake_up_event.semantic_translation), false);
-  assert.match(today.wake_up_event.semantic_translation, /richiamo metallico/i);
-  assert.match(today.wake_up_event.semantic_translation, /alle nove e quaranta/);
-  assert.doesNotMatch(today.wake_up_event.semantic_translation, /alle le /);
+  // Il risveglio arriva come dato, non come frase da ricopiare in apertura.
+  assert.doesNotMatch(today.wake_up_event.semantic_translation, /richiamo metallico|incantesimo/i);
+  assert.match(today.wake_up_event.semantic_translation, /poco prima delle dieci/);
+  assert.doesNotMatch(today.screen_behavior_summary.semantic_translation, /specchio nero|\d/);
 });
 
 test("il falso positivo resta fermo e finisce a casa", () => {
@@ -130,5 +131,6 @@ test("il questionario produce il profilo di Marco", () => {
   assert.equal(traits.archetype, "L'Alchimista / Conviviale");
   assert.equal(traits.narrative_focus, "Psicologico / Relazionale");
   assert.equal(traits.pacing, "Sincopato e dinamico");
-  assert.equal(homeAlias("Realismo Magico", traits.metaphor_domain), "Il Rifugio delle Spezie");
+  assert.equal(homeAlias("Realismo Magico", traits.metaphor_domain), "La Casa delle Spezie");
+  assert.equal(homeAlias("Noir / Hardboiled", traits.metaphor_domain), "La Casa Fredda");
 });

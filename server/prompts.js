@@ -1,147 +1,308 @@
 import { genderVoice } from "./meta.js";
+import { materialBlock, threadSeed } from "./dramaturgy.js";
+import { profileLabelStems } from "./transfiguration.js";
 
-export function buildSystemPrompt(payload) {
+// Il capitolo nasce in due tempi, come a teatro:
+// 1. il Drammaturgo legge i dati e scrive il copione (desiderio, scene, svolta, domanda finale);
+// 2. il Narratore scrive la prosa seguendo il copione.
+// Separare le due cose è ciò che toglie la cronaca: un modello che deve insieme
+// scegliere cosa raccontare e come scriverlo finisce per riassumere le fasce orarie.
+
+// ---------------------------------------------------------------------------
+// Blocchi condivisi
+
+function genreRegister(genre) {
+  const g = String(genre || "");
+  if (g.startsWith("Noir")) {
+    return "Noir: frasi secche, ombre e sospetto; la città è un antagonista che osserva; ironia amara, mai battute. Il protagonista indaga sulla propria giornata come su un caso.";
+  }
+  if (g.startsWith("Realismo")) {
+    return "Realismo magico: il quotidiano è preciso e concreto, e dentro ogni capitolo accade un solo piccolo prodigio trattato con naturalezza, senza spiegazioni (un oggetto che ricorda, il vento che sceglie una strada, una luce che arriva in ritardo). Il prodigio colora i fatti, non li contraddice e non li sostituisce.";
+  }
+  if (g.startsWith("Commedia")) {
+    return "Commedia brillante: situazioni, contrattempi e ironia di situazione; ritmo da battuta, il protagonista inciampa nella propria vita con grazia e se ne accorge. Mai solennità, mai sarcasmo sul corpo o sui dati sensibili.";
+  }
+  return `${g}: tono e passo coerenti dall'inizio alla fine del capitolo.`;
+}
+
+export function arcAct(currentDay, totalDays) {
+  const day = Math.max(1, Number(currentDay) || 1);
+  const total = Math.max(1, Number(totalDays) || 1);
+  if (day === 1) return 1;
+  if (day >= total) return 3;
+  return 2;
+}
+
+function arcBlock(book, memory, name, seed = "") {
+  const act = arcAct(book.current_day, book.total_days);
+  const stage = {
+    1: "PRIMO ATTO del romanzo: presenta il mondo e il protagonista e chiude sull'incidente che mette in moto la storia.",
+    2: "SECONDO ATTO del romanzo: la posta sale; la svolta di oggi rende la domanda del libro più urgente di ieri.",
+    3: "TERZO ATTO del romanzo: il culmine dell'intero arco. I fili aperti convergono, la domanda del libro riceve una risposta parziale dai fatti di oggi, e il finale resta aperto quanto basta per la vita che continua.",
+  }[act];
+  const line = String(memory.through_line || "").trim();
+  const concrete = `una domanda sì/no che nomina un elemento concreto della storia (un luogo, un appunto, un gesto che torna) e dice cosa vuole ${name}, cosa lo trattiene, cosa rischia — mai astrazioni come «cortina», «perimetro», «ore fisse», «altrove»`;
+  let thread;
+  if (line && memory.through_line_locked) {
+    thread = `Filo conduttore del romanzo (stabilito, non riformularlo): «${line}». Oggi deve fare un passo avanti visibile.`;
+  } else if (line && seed) {
+    thread = `Filo conduttore provvisorio: «${line}». Oggi arriva l'incidente scatenante del romanzo. Nuovo filo, da questo seme: «${seed}» — rifiniscilo nella lingua del genere restando concreto (stesso evento, stesso luogo); da domani non cambierà più.`;
+  } else if (line) {
+    thread = `Filo conduttore provvisorio: «${line}». Oggi nessun evento forte: copialo identico e fallo avanzare di un passo.`;
+  } else if (seed) {
+    thread = `Filo conduttore: lo fondi oggi, da questo seme: «${seed}» — rifiniscilo nella lingua del genere restando concreto.`;
+  } else {
+    thread = `Filo conduttore: ancora da stabilire. Lo fondi oggi, dal materiale più forte della giornata: ${concrete}.`;
+  }
+  return `Capitolo ${book.current_day} di ${book.total_days}: ${stage}\n${thread}`;
+}
+
+function characterBlock(book, memory) {
+  const p = book.protagonist;
+  const voice = genderVoice(p.gender);
+  if (Number(book.current_day) <= 1) {
+    return `${p.name}, ${p.age} anni. ${voice} È il primo capitolo: il lettore deve conoscerlo come si conosce il protagonista di un romanzo — da ciò che fa, desidera e teme, non da una scheda.`;
+  }
+  const portrait = String(memory.character_portrait || "").trim();
+  return `${p.name}, già presentato: niente età, niente ripresentazione. ${voice}${portrait ? ` Ciò che il lettore sa finora del personaggio: ${portrait}` : ""}`;
+}
+
+function profileBlock(p) {
+  const banned = profileLabelStems(p).map((stem) => `${stem}…`);
+  return `Profilo, da tradurre in comportamenti e mai da nominare: reattività «${p.emotional_reactivity}», rifugio «${p.archetype}», sguardo «${p.narrative_focus}», ritmo «${p.pacing}», lente metaforica «${p.metaphor_domain}». Parole del profilo vietate nel testo, in ogni forma: ${banned.join(", ")}.`;
+}
+
+function memoryOfRepetitions(memory) {
+  const titles = (memory.used_titles || []).filter(Boolean);
+  const openings = (memory.openings || []).filter(Boolean);
+  const lines = [];
+  if (titles.length) lines.push(`Titoli già usati (non riprenderne le parole): ${titles.map((t) => `«${t}»`).join(", ")}.`);
+  if (openings.length) lines.push(`Aperture già usate (non somigliarle per immagine né per costruzione): ${openings.map((t) => `«${t}»`).join(" / ")}.`);
+  return lines.join("\n");
+}
+
+const FACTS_RULES = `Intoccabili, dal JSON di oggi e dalla memoria: luoghi, ore, spostamenti, meteo, appunti (testo, ora, luogo, modo). Il resto è romanzo, ed è richiesto: sensazioni, pensieri, ricordi plausibili, dettagli d'ambiente, figure di sfondo senza nome, possibilità immaginate («e se…»). La fantasia non sposta il protagonista fuori dalle scene documentate, non inventa persone con nome né dialoghi con loro, non decide l'esito di un programma o di un appuntamento, non crea fatti che domani andrebbero smentiti. Ciò che non è documentato si pensa, si teme o si immagina: non si afferma. Niente misteri fabbricati (persone che aspettano, porte socchiuse, messaggi): il mistero vero è già nei dati.
+Appunti: il modo dell'appunto è il modo del racconto — un evento accaduto è scena, un programma resta attesa o decisione (mai esito), un'impressione resta pensiero. Ora e luogo sono quelli di registrazione. Mai citarli come appunti. Il loro dettaglio (bevanda, cibo, oggetto) compare una volta sola, spoglio, mai in titolo, mai giochi di parole, mai tormentone.`;
+
+// ---------------------------------------------------------------------------
+// 1. Il Drammaturgo: progetta il capitolo, non scrive prosa.
+
+export function buildPlanPrompt(payload) {
   const book = payload.book_config;
-  const protagonist = book.protagonist;
+  const p = book.protagonist;
+  const memory = payload.story_state_memory || {};
+  const today = payload.today_unified_telemetry || {};
+
+  const system = `Sei il Drammaturgo di un romanzo autobiografico in tre atti, genere ${book.genre}. Il protagonista è anche il lettore: vive già questa vita, e tu gliene dai una versione romanzata che lo tenga con il fiato sospeso. Non scrivi prosa: scrivi il copione del capitolo, che un Narratore seguirà alla lettera.
+
+# ARCO
+${arcBlock(book, memory, p.name, threadSeed(payload))}
+
+# PERSONAGGIO
+${characterBlock(book, memory)}
+${profileBlock(p)}
+
+# REGISTRO
+${genreRegister(book.genre)}
+
+# MATERIALE (già selezionato dai dati: parti da qui)
+${materialBlock(payload)}
+
+# FATTI E FANTASIA
+${FACTS_RULES}
+
+# COME SI PROGETTA UN CAPITOLO
+1. Desiderio di oggi: ciò che ${p.name} vuole, detto come un'azione che si può compiere o mancare (tornare, evitare, raggiungere, rivedere, decidere, finire, nascondere). Si appoggia al materiale più forte e al filo conduttore; se non è documentato, è un'intenzione o un pensiero, mai un fatto. Vietate le astrazioni: perimetro, confine, limite, geometria, cortina, soglia, margini, equilibrio, essenza, altrove, ordine, destino, disegno segreto. Male: «capire quale disegno governa le cose». Bene: «uscire in tempo per tornare dove è rimasta ieri sera».
+2. Paura: cosa rischia di perdere o di scoprire se ottiene ciò che vuole.
+3. Atto I (un quarto): apertura su un'immagine concreta e nuova — mai il risveglio, mai un suono che interrompe il sonno —, dove/quando/chi${Number(book.current_day) <= 1 ? `, ritratto del protagonista in azione (nome ed età, ${p.age} anni, entro il primo paragrafo)` : ", un tratto nuovo del personaggio"}, aggancio al ponte da ieri, innesco: il dato che accende il desiderio di oggi.
+4. Atto II (metà): da 2 a 3 scene, ciascuna in un luogo documentato e in un momento della giornata. Per ognuna: obiettivo concreto, ostacolo concreto (dai dati o da una fantasia lieve), un gesto visibile, un pensiero di ${p.name} in una frase, un esito che alza la posta. Fra le scene, un ponte di tensione. Svolta a metà: il dato del materiale che cambia la domanda.
+5. Atto III (un quarto, dati dalle 19:00): il punto più alto della giornata, poi un finale semi-aperto con una domanda concreta che il lettore si porta al capitolo dopo. La domanda nasce da un elemento documentato (un luogo nuovo, un appunto senza esito, una notte fuori, un sobbalzo da fermo, un filo aperto) e riguarda ciò che ${p.name} farà, sceglierà o rischierà — mai persone, oggetti o messaggi misteriosi inventati. Male: «quale filo invisibile legava quel perimetro al mondo?», «chi aveva lasciato la porta socchiusa?». Bene: «tornerà nella zona ovest, ora che conosce la strada?». Mai chiudere con il sonno o la notte che cala.
+6. Luoghi: i nomi stabiliti si usano alla lettera; per quelli da battezzare scegli ora il nome (sostantivo di funzione + epiteto nel clima del genere, mai «Luogo sconosciuto»).
+7. Titolo: sintetico ed evocativo, nato dalla svolta di oggi; non riusa parole dei titoli già usati. Sottotitolo: una riga che non svela il finale.
+8. Al massimo 2 immagini della lente «${p.metaphor_domain}», nuove e concrete.
+${memoryOfRepetitions(memory)}
+
+Solo JSON valido:
+{
+  "through_line": "domanda del romanzo (se già stabilita, copiala identica)",
+  "desiderio": "azione concreta",
+  "paura": "cosa rischia",
+  "nuovi_luoghi": {"<location_id da battezzare>": "Nome"},
+  "atto_1": {"apertura": "immagine d'apertura", "luogo": "nome", "momento": "parte del giorno", "ritratto": "come si mostra il personaggio", "innesco": "dato che accende il desiderio"},
+  "atto_2": {"scene": [{"luogo": "nome", "momento": "parte del giorno", "obiettivo": "", "ostacolo": "", "gesto": "", "pensiero": "", "esito": ""}], "svolta": "dato che cambia la domanda"},
+  "atto_3": {"luogo": "nome", "momento": "sera", "culmine": "", "domanda_finale": "domanda concreta per il lettore"},
+  "immagini": ["max 2"],
+  "titolo": "titolo del capitolo",
+  "sottotitolo": "una riga"
+}`;
+
+  const user = `Dati della giornata (fonte dei fatti):
+${JSON.stringify(compactDay(today), null, 2)}
+
+Progetta il Capitolo ${book.current_day}. Solo il JSON del copione.`;
+
+  return { system, user };
+}
+
+// Al Drammaturgo servono le scene, non il rumore numerico.
+function compactDay(today) {
+  return {
+    date: today.date,
+    is_empty_day: today.is_empty_day,
+    wake_up: today.wake_up_event?.semantic_translation,
+    weather: today.weather_daily_arc,
+    screen: today.screen_behavior_summary?.semantic_translation,
+    scenes: (today.unified_scenes || []).map((scene) => ({
+      time_window: scene.time_window,
+      location_id: scene.location_id,
+      place: scene.location_alias,
+      weather: scene.weather,
+      body: scene.biometric_vibe,
+      notes: scene.user_notes,
+    })),
+    end_of_day: today.midnight_cutoff_status,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 2. Il Narratore: scrive la prosa seguendo il copione.
+
+export function buildSystemPrompt(payload, plan = null) {
+  const book = payload.book_config;
+  const p = book.protagonist;
+  const memory = payload.story_state_memory || {};
   const cutoff = payload.today_unified_telemetry?.midnight_cutoff_status;
 
-  return `Sei un biografo invisibile e uno scrittore d'autore. Trasformi la giornata documentata nel Capitolo ${book.current_day} di ${book.total_days} di un romanzo autobiografico, genere ${book.genre}.
+  const script = plan
+    ? `# COPIONE DEL DRAMMATURGO — vincolante
+Il copione decide cosa accade e in che ordine; tu decidi come suona. Segui atti, scene, svolta, domanda finale, titolo e nomi dei luoghi nuovi. Se il copione contraddice i dati, vincono i dati.
+${JSON.stringify(plan, null, 2)}`
+    : `# COPIONE
+Nessun copione disponibile: prima di scrivere stabilisci in silenzio desiderio concreto di oggi, due scene dell'Atto II con obiettivo/ostacolo/esito, la svolta e la domanda finale, e seguili.`;
 
-Il capitolo non è il resoconto di ciò che ${protagonist.name} ha fatto. È un'esperienza narrativa costruita solo con i fatti disponibili: il lettore deve potersi riconoscere nel protagonista, seguire l'evoluzione degli eventi e desiderare di sapere come continua la sua vita.
+  return `Sei il Narratore di un romanzo autobiografico in tre atti, genere ${book.genre}: scrivi il Capitolo ${book.current_day} di ${book.total_days}. Il lettore è il protagonista: deve riconoscere la propria giornata e scoprirla come un romanzo di cui vuole il seguito. Terza persona, nome ${p.name}.
 
-### 1. STRUTTURA
-Il capitolo ha tre fasi, visibili nel movimento del racconto e prive di intestazioni interne:
-1. Incipit — spazio, tempo e protagonista.
-2. Sviluppo — azioni, spostamenti, interazioni ed eventi, in progressione.
-3. Chiusura — compimento della giornata e apertura verso il capitolo successivo.
+# ARCO E PERSONAGGIO
+${arcBlock(book, memory, p.name, threadSeed(payload))}
+${characterBlock(book, memory)}
+${profileBlock(p)}
 
-Il capitolo si legge da solo e, insieme, entra in una biografia più ampia.
+# REGISTRO
+${genreRegister(book.genre)}
 
-### 2. TITOLO E SOTTOTITOLO
-Restituiscili in \`chapter_title\` e \`chapter_subtitle\`. Non ripeterli dentro \`chapter_text\`.
-- Il titolo sintetizza il centro narrativo della giornata: un tema, un evento, un contrasto o un'immagine emersi dai fatti. Evita titoli generici, ripetitivi o soltanto descrittivi.
-- Il sottotitolo approfondisce il titolo: suggerisce l'atmosfera della giornata o il tema che il capitolo sviluppa davvero.
-- Non anticipare eventi assenti dal JSON.
+${script}
 
-### 3. INCIPIT
-Apri collocando il lettore dentro la giornata e fissando un punto di partenza narrativo, non un'etichetta di data.
-Integra in prosa, senza elenchi: l'orario di inizio, se c'è (\`wake_up_event\` o la prima scena); il luogo, quando è identificabile; le condizioni del contesto (\`weather\`, arco della giornata); le circostanze che situano il racconto.
-Poi il protagonista, sempre in terza persona e sempre con il nome ${protagonist.name}. ${genderVoice(protagonist.gender)} Ha ${protagonist.age} anni: falla entrare solo se serve alla scena, non come scheda anagrafica.
-Distribuisci il profilo dichiarato lungo il capitolo, senza concentrarlo nel primo capoverso. Lente: ${protagonist.metaphor_domain}. Modo di stare negli imprevisti: ${protagonist.emotional_reactivity}. Rifugio: ${protagonist.archetype}. Memoria della giornata: ${protagonist.narrative_focus}. Ritmo: ${protagonist.pacing}. Sono una coloritura della percezione, non un permesso di inventare gesti o stati d'animo.
+# MATERIALE DI OGGI
+${materialBlock(payload)}
 
-### 4. SVILUPPO
-Trasforma i dati in una sequenza fluida, in ordine temporale. Collega le esperienze solo quando il legame è nei fatti. Se il materiale lo consente, fai emergere una curiosità, uno scarto dalla routine, una circostanza significativa o una domanda implicita che i fatti successivi possono riprendere.
-Non fare di ogni dato un episodio. Seleziona, raggruppa, evita ripetizioni e descrizioni meccaniche. Passa da una scena all'altra con una transizione di tempo, di luogo o di tema.
-Ogni sequenza svolge almeno una funzione: far avanzare il racconto; aggiungere un tratto pertinente del protagonista; mostrare un cambiamento o un contrasto; collegare due eventi; preparare un fatto documentato più avanti; rafforzare un tema del capitolo.
-La tensione nasce solo dal materiale: un cambio di routine, un passaggio di contesto, un'interruzione, un contrasto fra dati, l'incertezza di un esito già documentato. Non occorre un conflitto drammatico. Qualche sequenza può chiudersi con una transizione aperta o con l'anticipazione prudente di un fatto che il JSON contiene più avanti.
-Non inventare pericoli, conflitti, colpi di scena o misteri. Non attribuire pensieri, sentimenti, intenzioni o reazioni emotive senza un fondamento nei dati.
+# COME SI SCRIVE
+Tre atti senza intestazioni, nell'ordine del copione: Atto I in 1-2 paragrafi, Atto II in 3-4, Atto III in 1-2.${Number(book.current_day) <= 1 ? ` Primo paragrafo: ${p.name} e i suoi ${p.age} anni entrano nella scena dentro un gesto, non in una scheda.` : ""}
+Non è un diario a fasce orarie: i paragrafi non si aprono con «Nel Luogo, verso le dieci…»; si entra nella scena da un'azione, un'immagine o un pensiero, e il quando arriva dopo, se serve. Le scene di routine si fondono in una frase di raccordo.
+Mostra, non riassumere. Ogni scena dell'Atto II vive in un momento preciso: un gesto, un dettaglio dei sensi (suono, odore, luce, tatto, temperatura detta con il corpo), un pensiero di ${p.name} in discorso indiretto libero, una reazione. Una frase che riassume ore («la mattinata scivolò via») vale solo come raccordo, una volta.
+Soggetto delle azioni è ${p.name}: «${p.name} vuole…, ${p.name} si ferma…», mai costruzioni impersonali come «l'intenzione è…», «la meta impone…», «la ricerca di… si scontra…». Il copione è una scaletta di cose da far accadere, non frasi da tradurre.
+Ritmo: frasi brevi nei momenti tesi, più distese nelle pause. Ogni paragrafo spinge il desiderio, lo ostacola o lo cambia; se non lo fa, taglialo.
+Non nominare mai il mestiere: vietate le parole obiettivo, ostacolo, esito, svolta, innesco, atto, climax, posta in gioco, «prima prova». Il lettore deve sentire la svolta, non leggerla.
+Incipit: mai il risveglio come prima frase, mai un suono che rompe il sonno; parti dall'immagine d'apertura del copione. Il risveglio, se serve, in una subordinata.
+Orari detti come li direbbe una persona («poco prima delle sette», «a metà pomeriggio»), mai al minuto, salvo l'ora di un appunto; al massimo 2 paragrafi aperti da un'ora.
+Lente «${p.metaphor_domain}»: solo le immagini del copione, al massimo 2.
+${memoryOfRepetitions(memory)}
 
-### 5. FATTI, CORPO E MISURE
-Fonte unica dei fatti di oggi: il JSON della giornata. Per la continuità usa solo \`story_state_memory\`. Non aggiungere spostamenti assenti da \`unified_scenes\`.
-Gli appunti sono voce documentata: integrali nella prosa, non citarli come note.
-Gradi, umidità, vento, battito, saturazione e stress sono intensità da tradurre, non cifre da riferire. Leggile per capire se l'aria è ferma o si muove, se il corpo resta quieto o ha un picco, se la giornata sale o scende. Poi cancellale dal testo.
-Nel titolo, nel sottotitolo, nel capitolo e nello stato narrativo non devono comparire misure, né in cifre né in lettere: niente «16°», «62%», «70 bpm», «sedici gradi», «sessantadue percento», «settanta pulsazioni», «novantotto percento di saturazione». Vietate anche le parole da bollettino: gradi, centigradi, percento, percentuale, bpm, pulsazioni, battiti al minuto, saturazione dell'ossigeno, km/h.
-Rendile con la drammaturgia, attraverso la lente ${protagonist.metaphor_domain} e il registro ${book.genre}:
-- Metafora: il freddo, l'afa, l'aria che pesa, il fiato largo, il cuore che tiene il tempo diventano immagini, non rilevazioni.
-- Contrasto: un corpo fermo e un battito che sale; una notte quieta e un'aria che poi si scalda.
-- Progressione: la variazione fra una scena e la successiva si sente come un crescere, un rallentare, un rarefarsi.
-- Climax: un picco documentato, specie a corpo fermo, è l'acme di quella sequenza. Si manifesta nella scena, senza nominare la causa emotiva se gli appunti non la dicono, e senza chiamarlo errore di misurazione.
-L'orario può situare la scena in forma discorsiva (la notte, l'alba, il tardo pomeriggio). Non diventa un registro di strumenti.
+# FATTI E FANTASIA
+${FACTS_RULES}
 
-### 6. SCRITTURA
-Prosa italiana, fluida, immersiva, letteraria, in terza persona. Il genere ${book.genre} è il registro, non una trama da aggiungere.
-Usa il nome ${protagonist.name} in modo naturale, senza ripeterlo a ogni frase.
-Non rendere visibile la raccolta dei dati. Vietate, anche in titolo, sottotitolo, riassunto, nomi di luogo e liste di stato, le parole: smartphone, telefono, cellulare, app, WhatsApp, Instagram, social, GPS, notifiche, sveglia digitale, smartwatch. Se \`screen_behavior_summary.semantic_translation\` o \`wake_up_event.semantic_translation\` offrono già un'immagine, usala e adattala al genere.
+# DIVIETI DI SUPERFICIE
+Misure: mai cifre o numeri in lettere di temperatura, umidità, battito, saturazione, velocità, durate («16°», «sedici gradi», «70 bpm»); vietate gradi, centigradi, percento, percentuale, bpm, pulsazioni, battiti al minuto, saturazione dell'ossigeno, km/h. Intensità → corpo, contrasto, progressione.
+Corpo: cuore/battito/polso al massimo una volta e solo se oggi c'è un picco a corpo fermo; senza picco, zero. Un picco in movimento è fatica del passo, mai presagio. Passo rapido ≠ corsa.
+Schermo: mai come oggetto in scena (niente «specchio nero», «schermo», «oggetto tascabile»); conta ciò che rivela — un desiderio di luoghi lontani, qualcuno con cui si parla, un'attesa —, al massimo una volta.
+Lessico vietato ovunque: smartphone, telefono, cellulare, app, WhatsApp, Instagram, social, GPS, notifiche, sveglia digitale, smartwatch.
+Lingua: mai la stessa parola piena in frasi vicine né tre volte nel capitolo (niente tic come «geometria», «precisione», «perimetro»); mai «X di X»; davanti ai nomi propri le preposizioni si articolano («della Casa…», «al Tavolo…», «nell'Archivio…», mai «de La», «a Il», «ne L'»).
 
-### 7. CHIUSURA
-${closingRule(cutoff)}
-La conclusione ricompone i fili principali. Se i fatti lo consentono, collega inizio e fine, mostra un cambiamento osservabile e richiama un tema già aperto. Può lasciare irrisolta una situazione documentata, destinata ai capitoli successivi.
-Non leggere la fine della giornata come stanchezza, soddisfazione, malinconia, riflessione o riposo, se nessun dato lo sostiene.
+# LUOGHI
+Nomi stabiliti in \`established_locations\` alla lettera e immutabili; nome pieno alla prima apparizione, poi nome comune; mai arredi dedotti dal nome. Le descrizioni provvisorie delle scene («luogo di fatica…», «tratto di strada…») non entrano mai nella prosa. I luoghi nuovi prendono il nome del copione (\`nuovi_luoghi\`) e si registrano in \`established_locations\`, restituito completo.
 
-### 8. CONTINUITÀ
-Il capitolo appartiene a una biografia. Da \`previous_chapter_summary\`, \`last_chapter_ending_state\`, \`recurring_motifs\` e \`unresolved_tensions\` ricava coerenza di nome, temi e cronologia. Non ripetere il capitolo precedente.
-Quando i fatti lo permettono, la chiusura lascia un passaggio: un evento ancora in corso, un luogo che può tornare, un tema, un cambio di routine, un contrasto fra giornate, un dato che acquisterà senso dopo. Compimento della giornata e possibilità di seguito, insieme.
-L'incipit riprende il filo senza riassumere ciò che è già stato narrato. Se le due giornate non si legano, basta un passaggio di tempo, di luogo o di clima. Non inventare un nesso causale.
+# CHIUSURA
+${closingRule(cutoff, p.name)}
 
-### 9. GIORNATA VUOTA E LUOGHI
-Se \`is_empty_day\` è true, non inventare uscite né azioni fuori dallo spazio documentato. Racconta la permanenza con i fatti disponibili e, se esistono, i fili già aperti nei capitoli precedenti, visti attraverso gli interessi dichiarati. Nessun evento nuovo.
-Per i luoghi già in \`established_locations\` usa soltanto il nome letterario salvato. Se \`location_id\` termina con \`_new\` e l'alias è ancora provvisorio, battezzalo con un nome evocativo coerente con il genere ${book.genre}. In \`established_locations\` conserva le chiavi e aggiorna solo i nomi.
+# TITOLO E MISURA
+Titolo e sottotitolo: quelli del copione, ritoccati solo se il testo lo chiede; fuori da \`chapter_text\`.
+Misura: 550-800 parole, 6-9 paragrafi; ogni scena dell'Atto II ne merita almeno 120. La lunghezza va alle scene, mai a meteo ripetuto o riassunti. \`chapter_text\`: solo prosa, paragrafi divisi da riga vuota, niente markdown.
 
-### 10. MISURA E VERIFICA
-\`chapter_text\` è solo il corpo: niente titolo, niente sottotitolo, niente elenchi, niente markdown. Paragrafi separati da una riga vuota. Minimo 800 parole. Se la giornata è povera, approfondisci le scene documentate; non allungare con fatti nuovi.
-Non ripetere il JSON e non commentare le istruzioni.
-Prima di rispondere verifica: titolo e sottotitolo specifici; incipit con spazio, tempo e ${protagonist.name}; terza persona; progressione comprensibile; chiusura che compie la giornata senza tagliarla; nessun fatto o stato interiore infondato; nessuna misura in cifre o in lettere; prosa continua, senza residui tecnici.
+# STATO RESTITUITO — fatti, non slogan
+\`character_portrait\`: ciò che il lettore sa ora di ${p.name}, max 3 frasi, da comportamenti e scelte, senza parole del profilo. \`previous_chapter_summary\`: dal Giorno 1 a oggi — luoghi, appunti, anomalie, svolte, conservando il modo degli appunti — chiuso dal passo avanti di oggi sul filo. \`recurring_motifs\`: max 3 elementi concreti che tornano, mai nomi di luogo. \`unresolved_tensions\`: domande documentate rimaste aperte (appunto senza esito, luogo nuovo lasciato a metà, notte fuori casa, sobbalzo da fermo), ognuna con luogo e momento.
 
-Restituisci esclusivamente un oggetto JSON valido:
+Solo JSON valido, senza commenti:
 {
   "chapter_number": ${book.current_day},
-  "chapter_title": "Titolo del centro narrativo",
-  "chapter_subtitle": "Sottotitolo: atmosfera o tema della giornata",
-  "chapter_text": "Corpo del capitolo",
+  "chapter_title": "titolo",
+  "chapter_subtitle": "una riga",
+  "chapter_text": "corpo del capitolo",
   "updated_story_state": {
-    "previous_chapter_summary": "Riassunto denso di ciò che è accaduto dal Giorno 1 fino alla fine del Giorno ${book.current_day}",
+    "character_portrait": "",
+    "previous_chapter_summary": "fatti dal Giorno 1 alla fine del Giorno ${book.current_day}",
     "last_chapter_ending_state": "AT_HOME_RESTING oppure OUTSIDE_CLIFFHANGER oppure OUTSIDE_AWAY",
-    "established_locations": {},
+    "established_locations": {"<ogni chiave ricevuta>": "<nome invariato, o appena battezzato>"},
     "recurring_motifs": [],
     "unresolved_tensions": []
   }
 }`;
 }
 
-function closingRule(cutoff) {
-  const threshold =
-    "Dalle 19:00 in poi, secondo gli orari presenti nelle scene, orienta il racconto verso la conclusione: apri meno sequenze nuove e dai spazio al rapporto fra gli eventi e al senso della giornata. Non citare le 19:00 e non scrivere che la giornata sta finendo. Gli eventi significativi dopo quell'ora si raccontano tutti.";
-  if (cutoff === "OUTSIDE_HIGH_ACTIVITY") {
-    return `${threshold} L'ultimo stato documentato è OUTSIDE_HIGH_ACTIVITY: la giornata si interrompe mentre il protagonista è ancora fuori, in movimento o con il corpo in piena attività. Chiudi in medias res su quel fatto, senza inventare un pericolo e senza risolvere la scena. In last_chapter_ending_state scrivi OUTSIDE_CLIFFHANGER.`;
-  }
-  if (cutoff === "OUTSIDE_AWAY") {
-    return `${threshold} L'ultimo stato documentato è OUTSIDE_AWAY: il protagonista è ancora fuori casa, senza piena attività. Chiudi su un'immagine aperta, fondata su quel fatto. In last_chapter_ending_state scrivi OUTSIDE_AWAY.`;
-  }
-  return `${threshold} L'ultimo stato documentato è AT_HOME_RESTING: la giornata si chiude nello spazio domestico. Puoi lasciare aperti temi e situazioni, non un'interruzione per strada. In last_chapter_ending_state scrivi AT_HOME_RESTING.`;
+function closingRule(cutoff, name) {
+  const base = `L'Atto III si costruisce sui dati dalle 19:00 in poi, senza annunciare l'ora: la tensione del giorno tocca il punto più alto e si scioglie solo in parte. Eventi serali significativi si raccontano come scena; permanenza di routine in poche righe tese sul filo, niente bilanci o meditazioni. Ultima frase: la domanda finale del copione, resa concreta e legata al filo — il lettore deve chiedersi cosa farà, dove andrà, se tornerà, chi risponderà. Mai ${name} che va a dormire, mai la notte che cala, niente stanchezza o «domani si vedrà», salvo un appunto serale che li registri. Mai agganci fabbricati (messaggi misteriosi, presagi senza referente).`;
+  if (cutoff === "OUTSIDE_HIGH_ACTIVITY") return `${base} Stato finale OUTSIDE_HIGH_ACTIVITY: ancora fuori, in attività — chiudi in medias res. Scrivi OUTSIDE_CLIFFHANGER.`;
+  if (cutoff === "OUTSIDE_AWAY") return `${base} Stato finale OUTSIDE_AWAY: ancora fuori casa — immagine aperta su quel fatto. Scrivi OUTSIDE_AWAY.`;
+  return `${base} Stato finale AT_HOME_RESTING: chiusura in casa, fili aperti sì, interruzioni per strada no. Scrivi AT_HOME_RESTING.`;
 }
 
 export function buildUserPrompt(payload) {
-  return `Questo è l'unico JSON della giornata. È la sola fonte dei fatti.
-
-Organizza il corpo in incipit, sviluppo e chiusura, senza intestazioni interne.
-Titolo e sottotitolo stanno nei campi dedicati, non nel testo.
-Non aggiungere spostamenti assenti da unified_scenes.
-Non attribuire stati interiori che gli appunti, i fatti del corpo o i capitoli precedenti non sostengono.
-Gradi, umidità, vento, battito e saturazione non compaiono in cifre né in lettere: diventano metafora, contrasto, progressione o climax.
+  const first = Number(payload.book_config.current_day) <= 1;
+  return `JSON unico della giornata: sola fonte dei fatti.
 
 ${JSON.stringify(payload, null, 2)}
 
-Scrivi ora il capitolo ${payload.book_config.current_day}. Rispondi solo con l'oggetto JSON richiesto.`;
+Scrivi il Capitolo ${payload.book_config.current_day} seguendo il copione. Solo l'oggetto JSON richiesto.
+Controllo finale (se un punto cade, riscrivi prima di rispondere): prima frase = immagine d'apertura, non il risveglio; Atto I con dove/quando/chi${first ? " e ritratto in azione" : ""}; Atto II con le scene del copione, ognuna con gesto, dettaglio dei sensi e pensiero; svolta sentita, non nominata; Atto III semi-aperto sulla domanda finale; nessuna parola del mestiere (obiettivo, ostacolo, esito, svolta), nessuna parola del profilo, nessuno schermo in scena; preposizioni articolate davanti ai nomi; nessuna misura; nessun paragrafo aperto da «luogo + ora»; 550-800 parole.`;
 }
 
 export function buildExpansionPrompt(payload, draft) {
-  return `Il capitolo qui sotto è troppo breve. Riscrivi l'intero oggetto JSON mantenendo gli stessi fatti, lo stesso titolo e lo stesso sottotitolo se funzionano, e le stesse chiavi di stato. Il corpo resta in tre fasi senza intestazioni: incipit, sviluppo, chiusura. Porta chapter_text ad almeno 800 parole, in italiano, approfondendo solo le scene documentate. Niente parole tecnologiche (niente telefono, app, social, GPS, notifiche, smartwatch). Niente misure in cifre o in lettere (niente gradi, percento, bpm, pulsazioni, saturazione): quelle intensità restano metafora, contrasto, progressione o climax. Non inventare luoghi, eventi o stati interiori assenti dal JSON di giornata.
+  return `Capitolo troppo corto (${countWordsLocal(draft.chapter_text)} parole). Riscrivi l'intero JSON a 550-800 parole, 6-9 paragrafi, con le regole e il copione del system prompt. Allunga così: ogni scena dell'Atto II diventa di almeno 120 parole, con un gesto, un dettaglio dei sensi, un pensiero in discorso indiretto libero e una reazione, più il ponte di tensione verso la scena successiva; l'Atto III diventa una scena vera (dove, un gesto, un pensiero) prima della domanda finale. Niente fatti nuovi, niente routine dilatata, niente astrazioni. Atto III sempre ≤2 paragrafi.
 
 JSON di giornata:
 ${JSON.stringify(payload)}
 
-Bozza da espandere:
+Bozza:
 ${JSON.stringify(draft)}`;
 }
 
+function countWordsLocal(text) {
+  return (String(text || "").trim().match(/\S+/g) || []).length;
+}
+
 export function buildRepairPrompt(payload, draft, words) {
-  return `Nel JSON narrativo compaiono parole vietate: ${words.join(", ")}. Riscrivi l'intero oggetto JSON sostituendole con immagini già coerenti con il genere ${payload.book_config.genre}. Conserva titolo, sottotitolo, fatti e lunghezza del testo. Non reintrodurre misure in cifre o in lettere.
+  return `Parole vietate nel JSON: ${words.join(", ")}. Riscrivi l'intero JSON sostituendole con immagini coerenti col genere ${payload.book_config.genre}, senza misure né fatti nuovi. Conserva titolo, sottotitolo, fatti, tre atti, lunghezza.
 
 ${JSON.stringify(draft)}`;
 }
 
 export function buildMeasurePrompt(payload, draft, hits) {
-  const protagonist = payload.book_config.protagonist;
-  return `Nel capitolo le misure sono ancora un bollettino: ${hits.join(", ")}. Riscrivi l'intero oggetto JSON.
-Ogni grado, percentuale, battito, saturazione o dato di vento diventa un'immagine drammaturgica, con la lente ${protagonist.metaphor_domain}: metafora, contrasto, progressione o climax. Il lettore deve sentire la condizione, non leggere lo strumento.
-Non lasciare cifre di misura né numeri scritti in lettere, e togli gradi, centigradi, percento, bpm, pulsazioni, battiti al minuto, saturazione dell'ossigeno, km/h. Conserva i fatti documentati, il titolo e il sottotitolo se funzionano, e la lunghezza del testo.
+  return `Misure da bollettino nel capitolo: ${hits.join(", ")}. Riscrivi l'intero JSON: le misure spariscono (al massimo resta una condizione dell'aria senza numeri); il corpo resta solo in un unico momento a corpo fermo davvero decisivo. Conserva fatti, titolo, sottotitolo, luoghi alla lettera, tre atti, lunghezza.
 
 ${JSON.stringify(draft)}`;
 }
 
+export function buildStylePrompt(payload, draft, issues) {
+  return `Correggi solo questi problemi: ${issues.join("; ")}. Riscrivi l'intero JSON con le regole e il copione del system prompt. Le parole del mestiere (obiettivo, ostacolo, esito, svolta) e quelle del profilo spariscono: al loro posto un gesto o un pensiero che fa sentire la stessa cosa. Se l'apertura è il risveglio, il capitolo comincia invece dall'immagine d'apertura del copione. Luoghi stabiliti alla lettera; quelli provvisori battezzati con il nome del copione. Lunghezza 550-800 parole: se serve tagliare, taglia routine e meteo, mai le scene dell'Atto II. Conserva fatti, tre atti e finale semi-aperto.
+
+${JSON.stringify(draft)}`;
+}
+
+// ---------------------------------------------------------------------------
+// Frontespizio
+
 export function buildClosingPrompt(book) {
   const last = book.days.at(-1);
   const memory = last?.story_state_after || {};
+  const titles = book.days.map((day) => day.chapter?.chapter_title).filter(Boolean);
   const chapters = book.days
     .map((day) => {
       const excerpt = String(day.chapter?.chapter_text || "").replace(/\s+/g, " ").trim().slice(0, 420);
@@ -150,26 +311,23 @@ export function buildClosingPrompt(book) {
     })
     .join("\n\n");
   const protagonist = book.book_config.protagonist;
+  const banned = profileLabelStems(protagonist).map((stem) => `${stem}…`).join(", ");
 
   return {
-    system: `Sei l'editor di un romanzo già scritto. I capitoli sono autonomi e insieme formano una sola biografia. Componi il frontespizio solo da ciò che i capitoli documentano, senza inventare eventi. ${genderVoice(protagonist.gender)}
-Il titolo del libro sintetizza l'elemento narrativo centrale dell'arco: un tema, un contrasto o un'immagine emersi dall'insieme. Niente titoli generici o soltanto descrittivi.
-Il sottotitolo approfondisce il titolo e suggerisce l'atmosfera del romanzo, senza anticipare un fatto che i capitoli non contengono.
-L'epigrafe è una frase guadagnata dal racconto, senza attribuzione.
-La quarta fa riconoscere il protagonista, seguire l'evoluzione documentata e desiderare di aver letto quella vita. Tra 140 e 180 parole, in terza persona, prosa continua: non è un indice dei capitoli e non chiude a forza i fili rimasti aperti.
-Non usare le parole smartphone, telefono, app, social, GPS, notifiche, smartwatch.
-Rispondi solo con JSON valido:
+    system: `Editor di un romanzo già scritto in tre atti: capitoli legati da un unico filo, una sola biografia. Frontespizio solo dai fatti documentati, senza inventare eventi. ${genderVoice(protagonist.gender)}
+book_title: nasce dal filo conduttore (la domanda, il desiderio, il luogo che conta), mai generico; deve essere diverso da ogni titolo di capitolo (${titles.map((t) => `«${t}»`).join(", ")}) e non riprenderne le parole piene. subtitle: una riga, approfondisce senza anticipare fatti assenti. epigraph: una frase guadagnata dal racconto, senza attribuzione. back_cover: 140-180 parole, terza persona, prosa continua, al presente — apre su una scena concreta del libro, presenta il protagonista da ciò che fa e desidera, pone la domanda drammatica del romanzo e accenna alla salita della tensione senza svelare lo scioglimento; non è un indice dei luoghi. Non attribuire esiti che i capitoli non dichiarano e non cambiare il modo degli appunti. Preposizioni articolate davanti ai nomi propri («della Casa…», «al Tavolo…»). Vietati: età, parole del profilo (${banned}), schermi e oggetti tecnologici («specchio nero» compreso), frasi riciclate dai capitoli, sintesi passe-partout. Parole vietate: smartphone, telefono, app, social, GPS, notifiche, smartwatch. Solo JSON valido:
 {
   "book_title": "titolo del romanzo",
   "subtitle": "sottotitolo breve",
-  "epigraph": "una frase di epigrafe, senza attribuzione tecnologica",
+  "epigraph": "una frase di epigrafe",
   "back_cover": "quarta di copertina tra 140 e 180 parole"
 }`,
     user: `Genere: ${book.book_config.genre}
-Protagonista: ${protagonist.name}, ${protagonist.age} anni
-Dominio metaforico: ${protagonist.metaphor_domain}
-Archetipo: ${protagonist.archetype}
+Protagonista: ${protagonist.name}
 Durata: ${book.book_config.total_days} giorni
+
+Filo conduttore: ${memory.through_line || "non dichiarato"}
+Ciò che il lettore sa del protagonista: ${memory.character_portrait || "non dichiarato"}
 
 Arco completo:
 ${memory.previous_chapter_summary || ""}

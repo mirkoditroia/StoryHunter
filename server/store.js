@@ -119,6 +119,8 @@ export function createBook(input) {
       protagonist,
     },
     story_state: {
+      through_line: "",
+      character_portrait: "",
       previous_chapter_summary: "Nessun capitolo precedente. La storia inizia oggi.",
       last_chapter_ending_state: "AT_HOME_RESTING",
       established_locations: {

@@ -886,6 +886,201 @@ details.json-fold summary {
 .epigraph { font-family: var(--serif); font-style: italic; color: var(--body); }
 .back-cover { border-top: 1px solid var(--line); margin-top: 1.5rem; padding-top: 1rem; }
 
+.compose-invite { text-align: center; }
+.compose-invite .lede { margin-left: auto; margin-right: auto; }
+.compose-invite .solid { margin-top: 0.4rem; }
+
+body.is-premiere .chrome,
+body.is-premiere #banner { opacity: 0; pointer-events: none; }
+
+.page.volume-premiere {
+  width: min(46rem, calc(100% - 2rem));
+  padding-top: 0;
+}
+
+.overture {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 2rem 1.4rem 3rem;
+  background:
+    radial-gradient(ellipse 70% 50% at 50% 42%, rgba(243, 236, 200, 0.16), transparent 62%),
+    radial-gradient(ellipse 90% 80% at 50% 50%, transparent 40%, rgba(0, 0, 0, 0.45) 100%),
+    #140e0c;
+  color: #f6ebe4;
+  text-align: center;
+  cursor: pointer;
+  animation: overtureHold 5.2s ease forwards;
+}
+.overture-inner { width: min(40rem, 100%); }
+.overture .kicker {
+  color: #ead8dc;
+  letter-spacing: 0.42em;
+  font-size: 0.78rem;
+  animation: titleRise 1.1s var(--ease-page) both;
+}
+.overture-title {
+  margin: 0.35rem 0 0;
+  font-family: var(--serif);
+  font-weight: 640;
+  font-size: clamp(3.4rem, 10vw, 7.2rem);
+  line-height: 0.92;
+  letter-spacing: -0.045em;
+  background: linear-gradient(105deg, #8a6356 0%, #f3ecc8 38%, #fff8ef 50%, #f3ecc8 62%, #ead8dc 100%);
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: titleRise 1.5s cubic-bezier(0.16, 1, 0.3, 1) 0.15s both, sheen 2.6s ease 0.2s both;
+}
+.overture-rule {
+  width: min(14rem, 46vw);
+  height: 1px;
+  margin: 1.35rem auto 1.15rem;
+  background: #a24c3c;
+  transform-origin: center;
+  animation: ruleDraw 1s var(--ease-page) 0.45s both;
+}
+.overture-sub,
+.overture .epigraph,
+.overture-name,
+.overture-hint {
+  animation: titleRise 1.2s var(--ease-page) 0.7s both;
+}
+.overture-sub {
+  margin: 0 auto;
+  max-width: 28rem;
+  font-family: var(--serif);
+  font-size: 1.25rem;
+  color: #f6ebe4;
+}
+.overture .epigraph {
+  margin: 1.1rem auto 0;
+  max-width: 32rem;
+  color: #ead8dc;
+  font-size: 1.15rem;
+}
+.overture-name {
+  margin: 1.8rem 0 0;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  font-size: 0.78rem;
+  color: #d6e4f1;
+}
+.overture-hint {
+  margin: 2.4rem 0 0;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  font-size: 0.72rem;
+  color: rgba(246, 235, 228, 0.62);
+}
+@keyframes overtureHold {
+  0%, 76% { opacity: 1; visibility: visible; }
+  100% { opacity: 0; visibility: hidden; }
+}
+@keyframes titleRise {
+  from { opacity: 0; transform: translateY(22px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes sheen {
+  from { background-position: 100% 0; }
+  to { background-position: 0% 0; }
+}
+@keyframes ruleDraw {
+  from { transform: scaleX(0); opacity: 0; }
+  to { transform: scaleX(1); opacity: 1; }
+}
+@keyframes bookArrive {
+  from { opacity: 0; transform: translateY(36px) scale(0.985); }
+  to { opacity: 1; transform: none; }
+}
+
+.volume-premiere.is-premiering .cinema-book {
+  animation: bookArrive 1.6s cubic-bezier(0.16, 1, 0.3, 1) 3.35s both;
+}
+.cinema-book {
+  max-width: none;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.cinema-cover {
+  min-height: 92vh;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  text-align: center;
+  padding: 12vh 0.5rem 8vh;
+}
+.cinema-cover h2 {
+  margin: 0;
+  font-size: clamp(3.3rem, 8vw, 6.4rem);
+  line-height: 0.94;
+  max-width: 12ch;
+}
+.cinema-subtitle {
+  margin: 1rem 0 0;
+  max-width: 28rem;
+  font-family: var(--serif);
+  font-size: 1.28rem;
+  color: var(--body);
+}
+.cinema-cover .epigraph {
+  margin: 1.4rem 0 0;
+  max-width: 32rem;
+  font-size: 1.12rem;
+}
+.cinema-by {
+  margin: 2.4rem 0 0;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  color: var(--subtitle);
+}
+.volume-leaf {
+  min-height: 78vh;
+  padding: 14vh 0 8vh;
+  border-top: 1px solid var(--line);
+}
+.chapter-index {
+  margin: 0 0 0.8rem;
+  color: var(--subtitle);
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+}
+.volume-leaf h3 {
+  font-size: clamp(2.1rem, 4.5vw, 3.3rem);
+  max-width: 18ch;
+  margin-bottom: 0.8rem;
+}
+.cinema-back {
+  width: 100vw;
+  margin: 10vh 0 0 calc(50% - 50vw);
+  min-height: 78vh;
+  display: grid;
+  align-content: center;
+  padding: 12vh max(1.4rem, calc(50vw - 22rem)) 10vh;
+  background:
+    radial-gradient(ellipse 80% 60% at 50% 30%, rgba(243, 236, 200, 0.08), transparent 60%),
+    #1e1412;
+  color: #f3ecc8;
+  border: 0;
+}
+.cinema-back .eyebrow,
+.cinema-back .prose,
+.cinema-back p { color: #f3ecc8; }
+.cinema-back .eyebrow { letter-spacing: 0.24em; }
+.cinema-back .prose p:first-of-type::first-letter { color: #f3ecc8; }
+.volume-tools {
+  display: flex;
+  justify-content: center;
+  margin: 1.6rem 0 0.4rem;
+}
+
 pre.json-view {
   white-space: pre-wrap;
   word-break: break-word;
@@ -971,6 +1166,8 @@ dialog::backdrop { background: rgba(213, 213, 215, 0.55); }
   .seal {
     animation: fadeOnly 150ms ease both;
   }
+  .overture { display: none; }
+  .volume-premiere.is-premiering .cinema-book { animation: none; opacity: 1; transform: none; }
   @keyframes fadeOnly {
     from { opacity: 0; }
     to { opacity: 1; }
@@ -1015,4 +1212,18 @@ dialog::backdrop { background: rgba(213, 213, 215, 0.55); }
   body::after { display: none; }
   .chrome, #banner, #busy, .no-print, .cycle-links { display: none !important; }
   .book, .sheet { box-shadow: none; }
+  .overture, .volume-tools { display: none !important; }
+  .cinema-cover, .volume-leaf, .cinema-back { min-height: 0; }
+  .volume-leaf, .cinema-back { break-before: page; }
+  .cinema-back {
+    width: auto;
+    margin: 2rem 0 0;
+    background: white;
+    color: black;
+    padding: 1rem 0;
+  }
+  .cinema-back .eyebrow,
+  .cinema-back .prose,
+  .cinema-back p,
+  .cinema-back .prose p:first-of-type::first-letter { color: black; }
 }

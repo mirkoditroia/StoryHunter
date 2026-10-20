@@ -19,9 +19,9 @@ export const samplePayload = {
       "Nel Giorno 2, Marco ha attraversato la città sotto una pioggia sottile, fermandosi al Giardino delle Statue Mute dove un gabbiano gli ha sottratto il pranzo durante un incontro carico di non detti.",
     last_chapter_ending_state: "AT_HOME_RESTING",
     established_locations: {
-      loc_home: "Il Rifugio delle Spezie",
+      loc_home: "La Casa delle Spezie",
       loc_park_new: "Il Giardino delle Statue Mute",
-      loc_work_new: "La Fornace Grigia",
+      loc_work_new: "Il Lavoro delle Ore Fisse",
     },
     recurring_motifs: [
       "Il gabbiano ladro come presagio di imprevisti",
@@ -49,7 +49,7 @@ export const samplePayload = {
         slot_origin: "SLOT_2_MORNING",
         time_window: "08:30 - 12:30",
         location_id: "loc_work_new",
-        location_alias: "La Fornace Grigia",
+        location_alias: "Il Lavoro delle Ore Fisse",
         weather: "Cielo terso, vento freddo",
         biometric_vibe: "Concentrazione statica, lieve tensione costante (HR medio 82 bpm, stress moderato)",
         user_notes: [],
