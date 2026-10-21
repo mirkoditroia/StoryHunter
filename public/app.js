@@ -230,9 +230,238 @@ function isStudioWindow() {
   return path === "/studio" || new URLSearchParams(location.search).has("studio");
 }
 
+const SOUND_KEY = "storyhunter-suono";
+const SOUND_TRACKS = {
+  rain: "/audio/rain.mp3",
+};
+
+let soundUnlocked = false;
+let soundCurrent = "";
+let soundLead = null;
+let soundTail = null;
+let soundFadeTimer = 0;
+let markLead = null;
+let markTail = null;
+let pageLead = null;
+let pageTail = null;
+
+function soundEnabled() {
+  try {
+    return localStorage.getItem(SOUND_KEY) !== "off";
+  } catch {
+    return true;
+  }
+}
+
+function persistSound(on) {
+  try {
+    localStorage.setItem(SOUND_KEY, on ? "on" : "off");
+  } catch {
+    /* ignore quota */
+  }
+}
+
+function soundTrackKey() {
+  return "rain";
+}
+
+function soundVolume() {
+  if (state.view === "notebook" || state.view === "volume" || state.view === "memory") return 0.035;
+  return 0.05;
+}
+
+function makeAmbienceNode() {
+  const node = new Audio();
+  node.loop = true;
+  node.preload = "auto";
+  node.playsInline = true;
+  return node;
+}
+
+function ambienceHost() {
+  let host = $("#ambience-nodes");
+  if (!host) {
+    host = document.createElement("div");
+    host.id = "ambience-nodes";
+    host.hidden = true;
+    document.body.append(host);
+  }
+  return host;
+}
+
+function ensureAmbience() {
+  if (soundLead && soundTail) return;
+  soundLead = makeAmbienceNode();
+  soundTail = makeAmbienceNode();
+  ambienceHost().append(soundLead, soundTail);
+}
+
+function makeMarkNode() {
+  const node = new Audio("/audio/mark.mp3");
+  node.preload = "auto";
+  node.playsInline = true;
+  return node;
+}
+
+function ensureMark() {
+  if (markLead && markTail) return;
+  markLead = makeMarkNode();
+  markTail = makeMarkNode();
+  ambienceHost().append(markLead, markTail);
+}
+
+function cutMark(node) {
+  if (!node) return;
+  window.clearTimeout(node._cut);
+  node.pause();
+  try {
+    node.currentTime = 0;
+  } catch {
+    /* some browsers throw until metadata is ready */
+  }
+}
+
+function playMark() {
+  if (isStudioWindow() || !soundEnabled()) return;
+  ensureMark();
+  const node = !markLead.paused && markTail.paused ? markTail : markLead;
+  cutMark(node);
+  node.volume = 0.16;
+  const start = node.play();
+  if (start?.catch) start.catch(() => {});
+  node._cut = window.setTimeout(() => cutMark(node), 220);
+}
+
+function makePageNode() {
+  const node = new Audio("/audio/page.mp3");
+  node.preload = "auto";
+  node.playsInline = true;
+  return node;
+}
+
+function ensurePage() {
+  if (pageLead && pageTail) return;
+  pageLead = makePageNode();
+  pageTail = makePageNode();
+  ambienceHost().append(pageLead, pageTail);
+}
+
+function playPageTurn() {
+  if (isStudioWindow() || !soundEnabled()) return;
+  ensurePage();
+  const node = !pageLead.paused && pageTail.paused ? pageTail : pageLead;
+  cutMark(node);
+  node.volume = 0.12;
+  const start = node.play();
+  if (start?.catch) start.catch(() => {});
+}
+
+function markFromClick(event) {
+  if (event.target.closest("#toggle-sound")) return;
+  if (state.view === "cover") {
+    playMark();
+    return;
+  }
+  const target = event.target.closest("button, a, [data-age-step], summary, .overture");
+  if (!target || target.disabled) return;
+  playMark();
+}
+
+function paintSoundToggle() {
+  const button = $("#toggle-sound");
+  if (!button) return;
+  const on = soundEnabled();
+  button.hidden = isStudioWindow();
+  button.setAttribute("aria-pressed", on ? "true" : "false");
+  button.dataset.track = on && soundUnlocked ? soundCurrent : "";
+  button.textContent = on ? "Suono" : "Silenzio";
+}
+
+function stopAmbience() {
+  window.clearTimeout(soundFadeTimer);
+  for (const node of [soundLead, soundTail]) {
+    if (!node) continue;
+    node.pause();
+    node.volume = 0;
+  }
+  soundCurrent = "";
+  cutMark(markLead);
+  cutMark(markTail);
+  cutMark(pageLead);
+  cutMark(pageTail);
+}
+
+function unlockAmbience() {
+  if (isStudioWindow()) return;
+  soundUnlocked = true;
+  syncAmbience();
+}
+
+function toggleAmbience() {
+  const on = !soundEnabled();
+  persistSound(on);
+  if (on) unlockAmbience();
+  else {
+    stopAmbience();
+    paintSoundToggle();
+  }
+}
+
+function syncAmbience() {
+  paintSoundToggle();
+  if (isStudioWindow() || !soundEnabled()) {
+    stopAmbience();
+    return;
+  }
+  if (!soundUnlocked) return;
+  ensureAmbience();
+  const key = soundTrackKey();
+  const vol = soundVolume();
+  if (soundCurrent === key && soundLead && !soundLead.paused) {
+    soundLead.volume = vol;
+    return;
+  }
+  crossfadeAmbience(key, vol);
+}
+
+function crossfadeAmbience(key, vol) {
+  ensureAmbience();
+  window.clearTimeout(soundFadeTimer);
+  const next = soundTail;
+  const prev = soundLead;
+  next.src = SOUND_TRACKS[key];
+  next.volume = 0;
+  const start = next.play();
+  if (start?.catch) start.catch(() => {});
+  let step = 0;
+  const from = prev && !prev.paused ? prev.volume : 0;
+  const tick = () => {
+    step += 1;
+    const t = Math.min(1, step / 14);
+    next.volume = vol * t;
+    if (prev && prev !== next && !prev.paused) prev.volume = from * (1 - t);
+    if (t >= 1) {
+      if (prev && prev !== next) {
+        prev.pause();
+        prev.removeAttribute("src");
+        prev.load();
+      }
+      next.volume = vol;
+      soundLead = next;
+      soundTail = prev || makeAmbienceNode();
+      soundCurrent = key;
+      paintSoundToggle();
+      return;
+    }
+    soundFadeTimer = window.setTimeout(tick, 80);
+  };
+  tick();
+}
+
 function go(view, motion = "enter-forward") {
   if (isStudioWindow()) view = "studio";
   else if (view === "slot" || view === "merge") view = "today";
+  const shouldTurn = !isStudioWindow() && motion !== "enter-cover" && motion !== "none";
   if (view !== "volume") state.premiere = false;
   state.pactArrive = state.view === "cover" && view === "soglia";
   state.view = view;
@@ -241,12 +470,16 @@ function go(view, motion = "enter-forward") {
   if (view === "volume" && state.book?.closing && state.book.days.some((entry) => entry.chapter?.sealed)) {
     openBoundBook()
       .then(() => {
-        if (state.view === "volume") render();
+        if (state.view === "volume") {
+          if (shouldTurn) playPageTurn();
+          render();
+        }
       })
       .catch((error) => setBanner("error", error.message));
     return;
   }
   render();
+  if (shouldTurn) playPageTurn();
 }
 
 function prefersReducedMotion() {
@@ -263,6 +496,7 @@ function clearCoverInk() {
 
 function spillCoverInk(event) {
   if (state.coverInking) return;
+  unlockAmbience();
   if (prefersReducedMotion()) {
     go("soglia", "enter-forward");
     return;
@@ -388,6 +622,7 @@ function render() {
   } else {
     pactRevealGen += 1;
   }
+  syncAmbience();
 }
 
 function renderChrome() {
@@ -1348,7 +1583,10 @@ function armPremiere() {
     root.classList.add("is-open");
     root.querySelector(".overture")?.remove();
   };
-  root.querySelector(".overture")?.addEventListener("click", finish);
+  root.querySelector(".overture")?.addEventListener("click", () => {
+    playMark();
+    finish();
+  });
   window.setTimeout(finish, prefersReducedMotion() ? 40 : 5400);
 }
 
@@ -1717,6 +1955,13 @@ function markPressed(selector, value, attr) {
 }
 
 async function onClick(event) {
+  if (event.target.closest("#toggle-sound")) {
+    const wasOff = !soundEnabled();
+    toggleAmbience();
+    if (wasOff) playMark();
+    return;
+  }
+  markFromClick(event);
   if (state.view === "cover") {
     spillCoverInk(event);
     return;
@@ -1794,6 +2039,7 @@ async function onClick(event) {
     markPressed("[data-genre]", state.form.genre, "data-genre");
     const next = $("#to-conferma");
     if (next) next.disabled = !voiceReady();
+    syncAmbience();
     return;
   }
   if (answer) {
