@@ -19,6 +19,8 @@ const state = {
   busy: false,
   motion: "enter-cover",
   premiere: false,
+  pactArrive: false,
+  coverInking: false,
 };
 
 const BARE_VIEWS = new Set(["cover", "soglia", "conferma"]);
@@ -231,6 +233,7 @@ function go(view, motion = "enter-forward") {
   if (isStudioWindow()) view = "studio";
   else if (view === "slot" || view === "merge") view = "today";
   if (view !== "volume") state.premiere = false;
+  state.pactArrive = state.view === "cover" && view === "soglia";
   state.view = view;
   state.motion = motion;
   if (view === "today" || (view === "studio" && state.book)) syncStudio();
@@ -249,14 +252,51 @@ function prefersReducedMotion() {
   return window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
 }
 
+let coverInkGen = 0;
+
+function clearCoverInk() {
+  coverInkGen += 1;
+  state.coverInking = false;
+  document.querySelectorAll(".ink-blot").forEach((node) => node.remove());
+}
+
+function spillCoverInk(event) {
+  if (state.coverInking) return;
+  if (prefersReducedMotion()) {
+    go("soglia", "enter-forward");
+    return;
+  }
+  state.coverInking = true;
+  const gen = ++coverInkGen;
+  const blot = document.createElement("span");
+  blot.className = "ink-blot";
+  blot.setAttribute("aria-hidden", "true");
+  blot.style.left = `${event.clientX}px`;
+  blot.style.top = `${event.clientY}px`;
+  blot.style.setProperty("--ink-turn", `${(Math.random() * 16 - 8).toFixed(1)}deg`);
+  blot.innerHTML = `<i></i><i></i>`;
+  document.body.append(blot);
+  window.setTimeout(() => {
+    if (gen !== coverInkGen) return;
+    blot.remove();
+    state.coverInking = false;
+    go("soglia", "enter-forward");
+  }, 1000);
+}
+
 function render() {
   const stage = $("#stage");
+  if (state.view !== "cover") clearCoverInk();
   document.querySelectorAll(".page-ghost-host").forEach((node) => node.remove());
-  stage.classList.remove("enter-forward", "enter-back", "enter-cover", "slot-next", "slot-prev", "is-turning", "is-turning-back");
+  stage.classList.remove("enter-forward", "enter-back", "enter-cover", "enter-soglia", "slot-next", "slot-prev", "is-turning", "is-turning-back");
   const previous = stage.querySelector(":scope > .page");
   const backward = state.motion === "enter-back" || state.motion === "slot-prev";
   const turning =
-    Boolean(previous) && state.motion !== "enter-cover" && state.motion !== "replace" && !prefersReducedMotion();
+    Boolean(previous) &&
+    state.motion !== "enter-cover" &&
+    state.motion !== "replace" &&
+    !state.pactArrive &&
+    !prefersReducedMotion();
   const outgoing = turning ? previous.getBoundingClientRect() : null;
   const ghost = turning ? document.createElement("div") : null;
   const host = turning ? document.createElement("div") : null;
@@ -294,7 +334,10 @@ function render() {
     volume: renderVolume,
   }[state.view];
   const turnClass = backward ? "is-turning-back" : "is-turning";
-  if (state.motion !== "replace") stage.classList.add(ghost ? turnClass : state.motion);
+  if (state.motion !== "replace") {
+    if (state.pactArrive) stage.classList.add("enter-soglia");
+    else stage.classList.add(ghost ? turnClass : state.motion);
+  }
   stage.innerHTML = html ? html() : "";
   if (state.view === "slot") renderPlaces();
   if (state.view === "anagrafica") requestAnimationFrame(() => bindDaysSlider());
@@ -322,6 +365,11 @@ function render() {
     if (last) document.getElementById(`chapter-${last.day}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
   if (state.view === "volume") armPremiere();
+  if (state.view === "soglia" && state.pactArrive && !prefersReducedMotion()) {
+    armPactReveal();
+  } else {
+    pactRevealGen += 1;
+  }
 }
 
 function renderChrome() {
@@ -383,29 +431,53 @@ function renderCover() {
     </section>`;
 }
 
+let pactRevealGen = 0;
+
+function armPactReveal() {
+  const page = document.querySelector(".soglia.is-arriving");
+  const pact = page?.querySelector(".pact");
+  if (!pact) return;
+  const gen = ++pactRevealGen;
+  const done = () => {
+    if (gen !== pactRevealGen || !page.isConnected) return;
+    page.classList.add("is-written");
+  };
+  pact.addEventListener(
+    "animationend",
+    (event) => {
+      if (event.animationName === "pactMask") done();
+    },
+    { once: true }
+  );
+  window.setTimeout(done, 3800);
+}
+
 function renderSoglia() {
+  const arriving = Boolean(state.pactArrive) && !prefersReducedMotion();
   const shelf = state.books
     .map(
-      (book) => `
-      <div class="spine">
+      (book, index) => `
+      <div class="spine" style="--i:${index}">
         <button type="button" data-open="${esc(book.id)}">
           <strong>${esc(book.name)}</strong>
           <small>${esc(book.genre)} · ${book.chapters}/${book.total_days} capitoli${book.complete ? " · completo" : ""}</small>
         </button>
         <div class="spine-actions">
-          <button type="button" class="ghost" data-delete="${esc(book.id)}">Elimina</button>
+          <button type="button" data-delete="${esc(book.id)}">Elimina</button>
         </div>
       </div>`
     )
     .join("");
+  const openNew = state.books.length
+    ? `<button type="button" class="pact-open is-quiet" id="new-cycle">Apri un altro taccuino</button>`
+    : `<button type="button" class="pact-open" id="new-cycle">Apri un nuovo taccuino.</button>`;
   return `
-    <section class="page soglia">
+    <section class="page soglia${arriving ? " is-arriving" : ""}">
       <div class="soglia-inner">
         <p class="eyebrow">Il patto</p>
         <h1>Ogni giorno un capitolo sigillato.</h1>
         <p class="pact">La routine diventa prosa. Tu componi la giornata; il narratore la scrive e la chiude. Il romanzo si apre alla fine del ciclo.</p>
-        <button type="button" class="solid" id="new-cycle">Apri un nuovo taccuino</button>
-        ${state.books.length ? `<div class="shelf"><p class="eyebrow">Taccuini aperti</p>${shelf}</div>` : ""}
+        ${state.books.length ? `<div class="shelf"><p class="eyebrow">Taccuini aperti</p>${shelf}${openNew}</div>` : openNew}
       </div>
     </section>`;
 }
@@ -1612,7 +1684,7 @@ function markPressed(selector, value, attr) {
 
 async function onClick(event) {
   if (state.view === "cover") {
-    go("soglia", "enter-forward");
+    spillCoverInk(event);
     return;
   }
 
