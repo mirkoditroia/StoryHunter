@@ -120,6 +120,7 @@ function setBanner(kind, text) {
   banner.className = `banner ${kind || ""}`.trim();
   banner.textContent = text || "";
   banner.hidden = !text;
+  if (text) banner.scrollIntoView({ block: "nearest" });
 }
 
 function setBusy(text) {
@@ -268,41 +269,51 @@ function spillCoverInk(event) {
   }
   state.coverInking = true;
   const gen = ++coverInkGen;
+  const title = document.querySelector(".cover h1");
+  const box = title?.getBoundingClientRect();
+  const x = box ? box.left + box.width / 2 : event.clientX;
+  const y = box ? box.top + box.height / 2 : event.clientY;
   const blot = document.createElement("span");
   blot.className = "ink-blot";
   blot.setAttribute("aria-hidden", "true");
-  blot.style.left = `${event.clientX}px`;
-  blot.style.top = `${event.clientY}px`;
+  blot.style.left = `${x}px`;
+  blot.style.top = `${y}px`;
   blot.style.setProperty("--ink-turn", `${(Math.random() * 16 - 8).toFixed(1)}deg`);
   blot.innerHTML = `<i></i><i></i>`;
   document.body.append(blot);
   window.setTimeout(() => {
     if (gen !== coverInkGen) return;
-    blot.remove();
-    state.coverInking = false;
+    blot.classList.add("is-leaving");
     go("soglia", "enter-forward");
-  }, 1000);
+    window.setTimeout(() => {
+      if (gen !== coverInkGen) return;
+      blot.remove();
+      state.coverInking = false;
+    }, 900);
+  }, 920);
 }
 
 function render() {
   const stage = $("#stage");
-  if (state.view !== "cover") clearCoverInk();
+  if (state.view !== "cover" && !state.pactArrive) clearCoverInk();
   document.querySelectorAll(".page-ghost-host").forEach((node) => node.remove());
   stage.classList.remove("enter-forward", "enter-back", "enter-cover", "enter-soglia", "slot-next", "slot-prev", "is-turning", "is-turning-back");
   const previous = stage.querySelector(":scope > .page");
   const backward = state.motion === "enter-back" || state.motion === "slot-prev";
+  const dissolving = Boolean(previous) && state.pactArrive && !prefersReducedMotion();
   const turning =
     Boolean(previous) &&
+    !dissolving &&
     state.motion !== "enter-cover" &&
     state.motion !== "replace" &&
-    !state.pactArrive &&
     !prefersReducedMotion();
-  const outgoing = turning ? previous.getBoundingClientRect() : null;
-  const ghost = turning ? document.createElement("div") : null;
-  const host = turning ? document.createElement("div") : null;
+  const ghosting = turning || dissolving;
+  const outgoing = ghosting ? previous.getBoundingClientRect() : null;
+  const ghost = ghosting ? document.createElement("div") : null;
+  const host = ghosting ? document.createElement("div") : null;
   if (ghost && host && outgoing) {
     host.className = "page-ghost-host";
-    ghost.className = `page-ghost${backward ? " is-back" : ""}`;
+    ghost.className = `page-ghost${backward ? " is-back" : ""}${dissolving ? " is-dissolve" : ""}`;
     ghost.style.top = `${outgoing.top}px`;
     ghost.style.left = `${outgoing.left}px`;
     ghost.style.width = `${outgoing.width}px`;
@@ -351,13 +362,20 @@ function render() {
     const settle = (event) => {
       if (!host.isConnected) return;
       if (event && event.target !== ghost) return;
-      if (event && event.animationName && !String(event.animationName).startsWith("leafTurn")) return;
+      if (
+        event &&
+        event.animationName &&
+        !String(event.animationName).startsWith("leafTurn") &&
+        event.animationName !== "coverDissolve"
+      ) {
+        return;
+      }
       ghost.removeEventListener("animationend", settle);
       host.remove();
       stage.classList.remove("is-turning", "is-turning-back");
     };
     ghost.addEventListener("animationend", settle);
-    window.setTimeout(() => settle(), 1100);
+    window.setTimeout(() => settle(), dissolving ? 1400 : 1100);
   }
 
   if (state.view === "notebook") {
@@ -539,28 +557,41 @@ function renderVoce() {
       <article class="paper" id="voce-form">
         <p class="eyebrow">La voce</p>
         <h2>Come verrà raccontato</h2>
-        <p class="lede">Prima la lente letteraria, poi cinque domande. Scorri fino in fondo.</p>
-        <div class="genre-row">
-          ${state.meta.genres
-            .map(
-              (genre) =>
-                `<button type="button" class="choice ${form.genre === genre.id ? "is-on" : ""}" data-genre="${esc(genre.id)}" aria-pressed="${form.genre === genre.id}"><strong>${esc(genre.short)}</strong><small>${esc(genre.blurb)}</small></button>`
-            )
-            .join("")}
-        </div>
-        ${
-          form.genre
-            ? `<p class="quiet">Lente scelta: ${esc(state.meta.genres.find((item) => item.id === form.genre)?.short || form.genre)}</p>`
-            : ""
-        }
-        <div class="preset-row">
-          ${state.meta.profiles
-            .map((profile) => `<button type="button" class="choice" data-profile="${esc(profile.id)}">${esc(profile.label)}</button>`)
-            .join("")}
-        </div>
-        <div class="questions">
-          ${state.meta.questions.map((question) => renderQuestion(question)).join("")}
-        </div>
+        <p class="lede">Due gesti: la lente del romanzo, poi cinque domande. In mezzo, se vuoi, un ritratto già scritto.</p>
+        <section class="voce-block" aria-labelledby="voce-lente-title">
+          <p class="voce-kicker">I</p>
+          <h3 class="voce-heading" id="voce-lente-title">La lente letteraria</h3>
+          <p class="voce-lead">Una sola. Fissa il clima, il lessico, ciò che la prosa può vedere.</p>
+          <div class="genre-row">
+            ${state.meta.genres
+              .map(
+                (genre) =>
+                  `<button type="button" class="choice ${form.genre === genre.id ? "is-on" : ""}" data-genre="${esc(genre.id)}" aria-pressed="${form.genre === genre.id}"><strong>${esc(genre.short)}</strong><small>${esc(genre.blurb)}</small></button>`
+              )
+              .join("")}
+          </div>
+        </section>
+        <aside class="voce-aside">
+          <p class="voce-kicker">Oppure</p>
+          <p class="voce-lead">Parti da un ritratto già pronto. Compila nome, giorni e le domande.</p>
+          <div class="preset-row">
+            ${state.meta.profiles
+              .map((profile) => {
+                const cut = profile.label.indexOf("—");
+                const gloss = cut >= 0 ? profile.label.slice(cut + 1).trim() : "";
+                return `<button type="button" class="choice" data-profile="${esc(profile.id)}"><strong>${esc(profile.name)}</strong>${gloss ? `<small>${esc(gloss)}</small>` : ""}</button>`;
+              })
+              .join("")}
+          </div>
+        </aside>
+        <section class="voce-block is-questions" aria-labelledby="voce-domande-title">
+          <p class="voce-kicker">II</p>
+          <h3 class="voce-heading" id="voce-domande-title">Cinque domande</h3>
+          <p class="voce-lead">Non è un test. Ogni risposta dice al narratore come guardarti.</p>
+          <div class="questions">
+            ${state.meta.questions.map((question, index) => renderQuestion(question, index)).join("")}
+          </div>
+        </section>
         <div class="sticky-bar">
           <button type="button" class="ghost" data-back="anagrafica">Indietro</button>
           <button type="button" class="solid" id="to-conferma" ${ready ? "" : "disabled"}>Continua</button>
@@ -569,12 +600,15 @@ function renderVoce() {
     </section>`;
 }
 
-function renderQuestion(question) {
+function renderQuestion(question, index = 0) {
   const selected = state.form.answers[question.id];
   return `
     <fieldset class="question">
-      <h3>${esc(question.title)}</h3>
-      <p>${esc(question.prompt)}</p>
+      <span class="question-num" aria-hidden="true">${index + 1}</span>
+      <div class="question-head">
+        <h3>${esc(question.title)}</h3>
+        <p>${esc(question.prompt)}</p>
+      </div>
       <div class="choice-row">
         ${question.options
           .map(
