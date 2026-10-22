@@ -12,15 +12,13 @@ import {
   findEchoes,
   findMeasures,
   findOveruse,
+  findInventedPlaces,
   findProfileLabels,
-  findProvisionalLeaks,
   findScaffolding,
   findSentenceEcho,
   findWakeCliches,
   firstSentence,
   fixPrepositions,
-  coerceTradeName,
-  isProvisionalAlias,
   lastSentence,
   opensWithWakeUp,
   sharedRun,
@@ -145,8 +143,6 @@ export async function writeChapter(payload) {
       warnings.push(`Pulizia del lessico non riuscita: ${error.message}`);
     }
   }
-  const stillBanned = bannedInDraft(draft);
-  if (stillBanned.length) warnings.push(`Restano parole da non pubblicare: ${stillBanned.join(", ")}.`);
 
   const measures = measuresInDraft(draft);
   if (measures.length) {
@@ -189,6 +185,20 @@ export async function writeChapter(payload) {
     }
   }
 
+  // Le correzioni di stile e di misura riscrivono il capitolo intero e possono
+  // rimettere dentro una parola vietata: l'ultimo controllo sta in fondo.
+  const lateBanned = bannedInDraft(draft);
+  if (lateBanned.length) {
+    try {
+      const fixed = normalizeDraft(await ask(buildRepairPrompt(payload, draft, lateBanned), 0.4), payload);
+      if (bannedInDraft(fixed).length < lateBanned.length) draft = fixed;
+    } catch (error) {
+      warnings.push(`Pulizia finale del lessico non riuscita: ${error.message}`);
+    }
+  }
+  const stillBanned = bannedInDraft(draft);
+  if (stillBanned.length) warnings.push(`Restano parole da non pubblicare: ${stillBanned.join(", ")}.`);
+
   const remainingStyle = styleIssuesInDraft(draft, context);
   if (remainingStyle.length) warnings.push(`Restano problemi di stile: ${remainingStyle.join("; ")}.`);
   if (countWords(draft.chapter_text) < MIN_WORDS) {
@@ -198,7 +208,9 @@ export async function writeChapter(payload) {
   // 4. Memoria del romanzo: ciò che restituisce il modello, più ciò che il codice sa meglio.
   const state = forceEnding(draft.updated_story_state, payload);
   const memory = payload.story_state_memory || {};
-  adoptPlannedPlaces(state, plan);
+  // La mappa dei luoghi la tiene il codice: sono i nomi veri dei dati, il
+  // modello non li battezza né li rinomina.
+  state.established_locations = placesKnown(payload);
   // Il filo resta provvisorio finché la vita non offre un evento forte
   // (l'incidente scatenante); da lì non si riscrive più.
   // Se il modello si limita a ricopiare il filo provvisorio nel giorno
@@ -222,7 +234,7 @@ export async function writeChapter(payload) {
       ...(payload.today_unified_telemetry?.unified_scenes || []).map((scene) => scene.location_id).filter(Boolean),
     ]),
   ];
-  state.last_scene = lastSceneOf(payload, state.established_locations);
+  state.last_scene = lastSceneOf(payload);
 
   const status = await llmStatus();
   return {
@@ -247,12 +259,27 @@ function styleContext(payload) {
     usedTitles: memory.used_titles || [],
     openings: memory.openings || [],
     closings: memory.closings || [],
-    // L'ora di un appunto si può dire al minuto: è l'unico orario esatto ammesso.
-    noteClocks: scenes.flatMap((scene) => (scene.user_notes || []).map((note) => clockPhrase(note.time))),
+    // L'ora di un appunto o di un impegno in agenda si può dire al minuto:
+    // sono gli unici orari esatti ammessi.
+    noteClocks: [
+      ...scenes.flatMap((scene) => (scene.user_notes || []).map((note) => clockPhrase(note.time))),
+      ...(payload.today_unified_telemetry?.calendar_events || [])
+        .filter((event) => !event.all_day)
+        .map((event) => clockPhrase(String(event.time_window || "").split(" - ")[0])),
+    ],
     places: [
       ...Object.values(payload.story_state_memory?.established_locations || {}),
       ...scenes.map((scene) => scene.location_alias),
     ],
+    // Tutto ciò che i dati sanno dei luoghi: il resto, in pagina, è inventato.
+    knownPlaces: [
+      payload.book_config?.city,
+      payload.book_config?.protagonist?.name,
+      ...Object.values(payload.story_state_memory?.established_locations || {}),
+      ...scenes.flatMap((scene) => [scene.location_alias, scene.location_at, scene.location_area, scene.location_also]),
+      ...(payload.today_unified_telemetry?.calendar_events || []).map((event) => event.title),
+      ...scenes.flatMap((scene) => (scene.user_notes || []).map((note) => note.text)),
+    ].filter(Boolean),
     peakAtRest: scenes.some((scene) => /tachicardia da fermo/i.test(scene.biometric_vibe || "")),
   };
 }
@@ -266,7 +293,6 @@ export function normalizePlan(raw, payload) {
     through_line: text(raw.through_line),
     desiderio: text(raw.desiderio),
     paura: text(raw.paura),
-    nuovi_luoghi: {},
     atto_1: pick(raw.atto_1, ["apertura", "luogo", "momento", "ritratto", "innesco"], text),
     atto_2: {
       scene: scenes
@@ -280,15 +306,6 @@ export function normalizePlan(raw, payload) {
     titolo: text(raw.titolo, 140),
     sottotitolo: text(raw.sottotitolo, 180),
   };
-  const ids = new Set((payload.today_unified_telemetry?.unified_scenes || []).map((scene) => scene.location_id));
-  if (raw.nuovi_luoghi && typeof raw.nuovi_luoghi === "object") {
-    for (const [id, value] of Object.entries(raw.nuovi_luoghi)) {
-      // Mestieri non documentati («Officina», «Ufficio») non diventano nomi di
-      // luogo: si sostituiscono col sostantivo di funzione, tenendo l'epiteto.
-      const name = coerceTradeName(clean(fixPrepositions(value), 120), id);
-      if (ids.has(id) && name && !isProvisionalAlias(name)) plan.nuovi_luoghi[id] = name;
-    }
-  }
   if (!plan.prodigio) delete plan.prodigio;
   const usable = plan.desiderio && plan.atto_2.scene.length >= 1 && plan.atto_3.domanda_finale;
   return usable ? plan : null;
@@ -303,14 +320,13 @@ function pick(source, keys, transform) {
   return out;
 }
 
-// Se il Narratore dimentica di registrare un nome scelto dal copione, lo si registra qui.
-function adoptPlannedPlaces(state, plan) {
-  if (!plan?.nuovi_luoghi) return;
-  const known = state.established_locations || {};
-  for (const [id, name] of Object.entries(plan.nuovi_luoghi)) {
-    if (!known[id] || isProvisionalAlias(known[id])) known[id] = name;
+// Luoghi del libro: quelli di ieri più quelli di oggi, col nome dei dati.
+function placesKnown(payload) {
+  const known = { ...(payload.story_state_memory?.established_locations || {}) };
+  for (const scene of payload.today_unified_telemetry?.unified_scenes || []) {
+    if (scene.location_id && scene.location_alias) known[scene.location_id] = scene.location_alias;
   }
-  state.established_locations = known;
+  return known;
 }
 
 export async function composeVolume(book) {
@@ -588,24 +604,9 @@ function normalizeDraft(raw, payload) {
 
 export function sanitizeState(incoming, previous) {
   const source = incoming && typeof incoming === "object" ? incoming : {};
+  // I nomi dei luoghi vengono dai dati e li tiene il codice: ciò che il
+  // modello restituisce in `established_locations` non conta.
   const established = { ...(previous?.established_locations || {}) };
-  const nextLocations =
-    source.established_locations && typeof source.established_locations === "object"
-      ? source.established_locations
-      : {};
-  for (const [key, value] of Object.entries(nextLocations)) {
-    if (!/^loc_[a-z0-9_]+$/.test(key)) continue;
-    // Un mestiere inventato si riporta al sostantivo di funzione; se non si può,
-    // il luogo resta da battezzare domani.
-    const alias = coerceTradeName(clean(value, 160), key);
-    if (!alias) continue;
-    // Un alias provvisorio non è un nome: non si archivia mai come battesimo.
-    if (isProvisionalAlias(alias)) continue;
-    // Un nome già battezzato è immutabile: si può solo battezzare un luogo
-    // nuovo o sostituire un alias ancora provvisorio («Luogo sconosciuto»).
-    if (established[key] && !isProvisionalAlias(established[key])) continue;
-    established[key] = alias;
-  }
 
   let ending = source.last_chapter_ending_state;
   if (!ENDINGS.has(ending)) ending = previous?.last_chapter_ending_state || "AT_HOME_RESTING";
@@ -650,6 +651,7 @@ export function styleIssuesInDraft(draft, context = {}) {
     protagonist = null,
     usedTitles = [],
     places = [],
+    knownPlaces = null,
     peakAtRest = true,
     openings = [],
     closings = [],
@@ -674,9 +676,11 @@ export function styleIssuesInDraft(draft, context = {}) {
   if (hype.length) {
     issues.push(`dettaglio di un appunto celebrato o ripetuto come tormentone: ${hype.join(", ")}`);
   }
-  const leaks = findProvisionalLeaks(draft.chapter_text);
-  if (leaks.length) {
-    issues.push(`luoghi non battezzati: la prosa usa descrizioni provvisorie (${leaks.join(", ")}) invece di nomi propri`);
+  if (knownPlaces) {
+    const invented = findInventedPlaces([draft.chapter_subtitle, draft.chapter_text].join("\n"), knownPlaces);
+    if (invented.length) {
+      issues.push(`luoghi inventati (${invented.join(", ")}): in pagina solo i luoghi veri dei dati, con il loro nome; la casa è «casa»`);
+    }
   }
   const timeLed = countTimeLedParagraphs(draft.chapter_text);
   if (timeLed > 2) {
@@ -760,7 +764,6 @@ function draftBlob(draft) {
     draft.updated_story_state.character_portrait,
     ...(draft.updated_story_state.recurring_motifs || []),
     ...(draft.updated_story_state.unresolved_tensions || []),
-    ...Object.values(draft.updated_story_state.established_locations || {}),
   ].join("\n");
   return blob;
 }

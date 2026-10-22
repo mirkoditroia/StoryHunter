@@ -26,8 +26,21 @@ function slot(id, extra) {
     places: [],
     notes: [],
     notes_text: "",
+    calendar_events: [],
     ...extra,
   };
+}
+
+// Impegno del calendario di sistema. Con `anchor` (indice della tappa nello
+// slot) l'ora segue quella tappa dopo la variazione: in agenda gli orari sono
+// tondi, la persona arriva quando arriva. Senza `anchor` l'ora resta fissa,
+// anche se a quell'ora la persona è altrove: con dati veri succede spesso.
+function cal(title, start, end, extra = {}) {
+  return { title, start, end, all_day: false, recurring: false, ...extra };
+}
+
+function allDay(title, extra = {}) {
+  return { title, start: "", end: "", all_day: true, recurring: false, ...extra };
 }
 
 function sleep(start, end, hr = 56) {
@@ -98,6 +111,7 @@ const SCENARIOS = [
           places: [sleep("00:20", "05:50", 56)],
         },
         morning: {
+          calendar_events: [cal("Riunione di reparto", "10:30", "11:30", { anchor: 2, recurring: true })],
           weather: "Sereno, 8°, vento da nord 16 km/h",
           wake_time: "07:00",
           doomscrolling_minutes: 24,
@@ -109,6 +123,7 @@ const SCENARIOS = [
           ],
         },
         afternoon: {
+          calendar_events: [cal("Pranzo con Giulia", "13:00", "13:45", { anchor: 1 })],
           weather: "Poco nuvoloso, 14°, vento debole",
           doomscrolling_minutes: 6,
           messaging_minutes: 22,
@@ -148,6 +163,7 @@ const SCENARIOS = [
           places: [sleep("12:00", "17:52", 53)],
         },
         evening: {
+          calendar_events: [cal("Turno di notte", "22:30", "23:59", { anchor: 2, recurring: true })],
           weather: "Sereno, 11°, vento debole",
           wake_time: "19:00",
           doomscrolling_minutes: 26,
@@ -214,6 +230,7 @@ const SCENARIOS = [
           ],
         },
         afternoon: {
+          calendar_events: [cal("Revisione del progetto con il capo", "15:00", "16:00")],
           weather: "Pioggia moderata, 9°, raffiche a 28 km/h",
           doomscrolling_minutes: 11,
           messaging_minutes: 17,
@@ -247,6 +264,7 @@ const SCENARIOS = [
           places: [home("00:12", "01:05", 68), sleep("01:05", "05:55", 57)],
         },
         morning: {
+          calendar_events: [cal("Call con il cliente — link https://zoom.us/j/8812", "10:00", "10:45")],
           weather: "Sereno, 13°, vento debole",
           wake_time: "08:32",
           doomscrolling_minutes: 42,
@@ -265,6 +283,7 @@ const SCENARIOS = [
           ],
         },
         evening: {
+          calendar_events: [cal("Palestra", "19:00", "20:00")],
           weather: "Sereno, 15°, brezza",
           doomscrolling_minutes: 33,
           messaging_minutes: 7,
@@ -296,6 +315,7 @@ const SCENARIOS = [
           places: [desk("12:10", "17:25", 76)],
         },
         evening: {
+          calendar_events: [cal("Corsa del giovedì", "18:30", "19:30", { anchor: 1, recurring: true })],
           weather: "Sereno, 13°, vento debole",
           doomscrolling_minutes: 9,
           messaging_minutes: 4,
@@ -339,6 +359,7 @@ const SCENARIOS = [
           places: [sleep("06:00", "09:48", 55), home("09:48", "11:55", 69)],
         },
         afternoon: {
+          calendar_events: [cal("Caffè con Paolo", "15:00", "16:00", { anchor: 2 })],
           weather: "Sole, 24°, vento da sud 10 km/h",
           doomscrolling_minutes: 6,
           messaging_minutes: 8,
@@ -376,6 +397,7 @@ const SCENARIOS = [
           places: [sleep("00:40", "05:50", 60)],
         },
         morning: {
+          calendar_events: [cal("Visita dal dentista", "11:00", "11:30")],
           weather: "Coperto, 11°, umidità alta",
           wake_time: "10:18",
           doomscrolling_minutes: 36,
@@ -407,6 +429,7 @@ const SCENARIOS = [
           places: [sleep("00:15", "05:45", 56)],
         },
         morning: {
+          calendar_events: [cal("Ritiro raccomandata in posta", "09:45", "10:15", { anchor: 2 })],
           weather: "Sereno, 12°, vento da sud 9 km/h",
           wake_time: "08:04",
           doomscrolling_minutes: 6,
@@ -505,6 +528,7 @@ const SCENARIOS = [
           places: [desk("12:05", "17:10", 76)],
         },
         evening: {
+          calendar_events: [cal("Cena da Marta", "19:30", "21:00", { anchor: 1 })],
           weather: "Sereno, 13°, vento in calo",
           doomscrolling_minutes: 6,
           messaging_minutes: 34,
@@ -536,6 +560,7 @@ const SCENARIOS = [
           places: [sleep("00:05", "05:40", 55)],
         },
         morning: {
+          calendar_events: [cal("Treno", "07:15", "11:45", { anchor: 1 })],
           weather: "Nebbia bassa, 6°, poi schiarite",
           wake_time: "06:38",
           doomscrolling_minutes: 33,
@@ -579,6 +604,7 @@ const SCENARIOS = [
           places: [home("07:08", "07:55", 74), walk("centro", "08:02", "08:26", 99), desk("08:32", "11:50", 76)],
         },
         afternoon: {
+          calendar_events: [cal("Colloquio annuale", "16:30", "17:15")],
           weather: "Nuvoloso, 14°, vento debole",
           doomscrolling_minutes: 8,
           messaging_minutes: 14,
@@ -607,6 +633,7 @@ const SCENARIOS = [
     build: () =>
       day({
         night: {
+          calendar_events: [allDay("Compleanno di Luca")],
           weather: "Sereno, 11°, aria ferma",
           places: [sleep("00:50", "05:55", 57)],
         },
@@ -668,6 +695,7 @@ const SCENARIOS = [
           places: [desk("12:00", "17:35", 81)],
         },
         evening: {
+          calendar_events: [cal("Aperitivo con i colleghi", "19:00", "20:30")],
           weather: "Pioggia leggera, 12°, vento in calo",
           doomscrolling_minutes: 46,
           messaging_minutes: 9,
@@ -700,6 +728,7 @@ const SCENARIOS = [
           places: [desk("12:05", "17:05", 75)],
         },
         evening: {
+          calendar_events: [cal("Concerto", "21:30", "23:30", { anchor: 3 })],
           weather: "Sereno, 14°, vento debole",
           doomscrolling_minutes: 4,
           messaging_minutes: 26,
@@ -940,12 +969,12 @@ function varyPlaces(slot, rng) {
 
 export function personalizeSlots(slots, seed) {
   const rng = rngFrom(seed);
-  return (slots || []).map((slot) => ({
-    ...slot,
-    weather: varyWeather(slot.weather, slot.id, rng),
-    doomscrolling_minutes: varyMinutes(slot.doomscrolling_minutes, rng),
-    messaging_minutes: varyMinutes(slot.messaging_minutes, rng),
-    wake_time: slot.wake_time
+  return (slots || []).map((slot) => {
+    // Stesso ordine di estrazione di sempre: le giornate già viste non cambiano.
+    const weather = varyWeather(slot.weather, slot.id, rng);
+    const doomscrolling = varyMinutes(slot.doomscrolling_minutes, rng);
+    const messaging = varyMinutes(slot.messaging_minutes, rng);
+    const wake = slot.wake_time
       ? clockOf(
           clamp(
             minutesOf(slot.wake_time) + rng.signed(22),
@@ -953,10 +982,32 @@ export function personalizeSlots(slots, seed) {
             SLOT_BOUNDS[slot.id][1]
           )
         )
-      : "",
-    places: varyPlaces(slot, rng),
-    notes: Array.isArray(slot.notes) ? slot.notes.map((note) => ({ ...note })) : [],
-  }));
+      : "";
+    const places = varyPlaces(slot, rng);
+    return {
+      ...slot,
+      weather,
+      doomscrolling_minutes: doomscrolling,
+      messaging_minutes: messaging,
+      wake_time: wake,
+      places,
+      notes: Array.isArray(slot.notes) ? slot.notes.map((note) => ({ ...note })) : [],
+      calendar_events: anchorCalendar(slot, places),
+    };
+  });
+}
+
+// Un impegno ancorato comincia al quarto d'ora prima dell'arrivo nella tappa
+// e conserva la sua durata; l'ancora non esce mai dal simulatore.
+function anchorCalendar(slot, places) {
+  return (Array.isArray(slot.calendar_events) ? slot.calendar_events : []).map((event) => {
+    const { anchor, ...rest } = event;
+    const place = Number.isInteger(anchor) ? places[anchor] : null;
+    if (!place || rest.all_day) return { ...rest };
+    const length = Math.max(15, minutesOf(rest.end) - minutesOf(rest.start));
+    const start = Math.max(SLOT_BOUNDS[slot.id][0], Math.floor(minutesOf(place.start) / 15) * 15);
+    return { ...rest, start: clockOf(start), end: clockOf(Math.min(23 * 60 + 59, start + length)) };
+  });
 }
 
 function dayDigest(slots) {
@@ -1016,11 +1067,13 @@ export function applySimulatedTelemetry(slots, { bookId = "", day = 1, shift = 0
     if (!previous) return slot;
     const notes = Array.isArray(previous.notes) ? previous.notes : [];
     const notesText = String(previous.notes_text || "");
+    const agenda = Array.isArray(previous.calendar_events) ? previous.calendar_events : [];
     return {
       ...slot,
       included: previous.included !== false,
       notes,
       notes_text: notesText,
+      ...(agenda.length ? { calendar_events: agenda } : {}),
     };
   });
 }

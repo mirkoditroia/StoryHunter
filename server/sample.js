@@ -3,6 +3,7 @@ export const samplePayload = {
     total_days: 5,
     current_day: 3,
     genre: "Realismo Magico",
+    city: "Milano",
     protagonist: {
       name: "Marco",
       age: 27,
@@ -16,13 +17,14 @@ export const samplePayload = {
   },
   story_state_memory: {
     previous_chapter_summary:
-      "Nel Giorno 2, Marco ha attraversato la città sotto una pioggia sottile, fermandosi al Giardino delle Statue Mute dove un gabbiano gli ha sottratto il pranzo durante un incontro carico di non detti.",
+      "Nel Giorno 2, Marco ha attraversato Milano sotto una pioggia sottile, fermandosi al Parco Sempione dove un gabbiano gli ha sottratto il pranzo durante un incontro carico di non detti.",
     last_chapter_ending_state: "AT_HOME_RESTING",
     established_locations: {
-      loc_home: "La Casa delle Spezie",
-      loc_park_new: "Il Giardino delle Statue Mute",
-      loc_work_new: "Il Lavoro delle Ore Fisse",
+      loc_home: "casa",
+      loc_park_parco_sempione: "Parco Sempione",
+      loc_work_via_dante: "il lavoro in via Dante",
     },
+    seen_locations: ["loc_home", "loc_work_via_dante", "loc_park_parco_sempione"],
     recurring_motifs: [
       "Il gabbiano ladro come presagio di imprevisti",
       "I pensieri che fermentano come lievito madre",
@@ -48,8 +50,10 @@ export const samplePayload = {
       {
         slot_origin: "SLOT_2_MORNING",
         time_window: "08:30 - 12:30",
-        location_id: "loc_work_new",
-        location_alias: "Il Lavoro delle Ore Fisse",
+        location_id: "loc_work_via_dante",
+        location_alias: "il lavoro in via Dante",
+        location_at: "al lavoro, in via Dante",
+        location_area: "Cordusio, Milano",
         weather: "Cielo terso, vento freddo",
         biometric_vibe: "Concentrazione statica, lieve tensione costante (HR medio 82 bpm, stress moderato)",
         user_notes: [],
@@ -57,8 +61,10 @@ export const samplePayload = {
       {
         slot_origin: "SLOT_3_AFTERNOON",
         time_window: "13:15 - 14:30",
-        location_id: "loc_park_new",
-        location_alias: "Il Giardino delle Statue Mute",
+        location_id: "loc_park_parco_sempione",
+        location_alias: "Parco Sempione",
+        location_at: "al Parco Sempione",
+        location_area: "Sempione, Milano",
         weather: "Nuvole basse in rapido movimento",
         biometric_vibe: "Passo rapido seguito da sosta inquieta (HR 98 bpm)",
         user_notes: [
@@ -71,8 +77,10 @@ export const samplePayload = {
       {
         slot_origin: "SLOT_4_EVENING",
         time_window: "19:30 - 23:59",
-        location_id: "loc_unknown_est_new",
-        location_alias: "Luogo sconosciuto nella zona Est della città",
+        location_id: "loc_unknown_via_pacini",
+        location_alias: "via Pacini",
+        location_at: "in via Pacini",
+        location_area: "Città Studi, Milano",
         weather: "Pioggia battente",
         biometric_vibe: "Picco improvviso di adrenalina e tachicardia da fermo alle 21:15 (HR 128 bpm, SpO2 98%)",
         user_notes: [
@@ -81,6 +89,19 @@ export const samplePayload = {
             text: "Ho bruciato il risotto proprio mentre cercavo di fare colpo.",
           },
         ],
+      },
+    ],
+    calendar_events: [
+      {
+        time_window: "21:00 - 23:00",
+        title: "Cena da Chiara",
+        kind: "social",
+        all_day: false,
+        recurring: false,
+        presence: "AWAY",
+        location_id: "loc_unknown_via_pacini",
+        location_alias: "via Pacini",
+        location_at: "in via Pacini",
       },
     ],
     midnight_cutoff_status: "OUTSIDE_HIGH_ACTIVITY",

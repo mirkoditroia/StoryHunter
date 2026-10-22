@@ -42,7 +42,7 @@ const ARC_LABEL = {
 };
 
 const BANNED =
-  /\b(smartphone|telefonino|cellulare|telefono|whatsapp|instagram|facebook|tiktok|twitter|gps|notifica|notifiche|smartwatch|doomscrolling|applicazioni|applicazione|touchscreen|social)\b|\bapps?\b/i;
+  /\b(smartphone|telefonino|cellulare|telefono|whatsapp|instagram|facebook|tiktok|twitter|gps|notifica|notifiche|smartwatch|doomscrolling|applicazioni|applicazione|touchscreen|social|videochiamata|videochiamate|zoom|webinar)\b|\bapps?\b/i;
 
 export function containsBanned(text) {
   return BANNED.test(String(text || ""));
@@ -63,62 +63,11 @@ export function findBanned(text) {
   const found = new Set();
   const source = String(text || "");
   for (const match of source.matchAll(
-    /\b(smartphone|telefonino|cellulare|telefono|whatsapp|instagram|facebook|tiktok|twitter|gps|notifica|notifiche|smartwatch|doomscrolling|applicazioni|applicazione|touchscreen|social|apps?)\b/gi
+    /\b(smartphone|telefonino|cellulare|telefono|whatsapp|instagram|facebook|tiktok|twitter|gps|notifica|notifiche|smartwatch|doomscrolling|applicazioni|applicazione|touchscreen|social|videochiamata|videochiamate|zoom|webinar|apps?)\b/gi
   )) {
     found.add(match[0].toLowerCase());
   }
   return [...found];
-}
-
-export function homeAlias(genre, metaphorDomain = "") {
-  // Il sostantivo dice la funzione (è la casa intera, mai una sola stanza);
-  // la lente del protagonista entra solo come epiteto.
-  const domain = metaphorDomain.toLowerCase();
-  if (genre.startsWith("Noir")) {
-    if (domain.startsWith("arti")) return "La Casa in Penombra";
-    if (domain.startsWith("cucina")) return "La Casa Fredda";
-    if (domain.startsWith("sport")) return "La Casa del Corpo Stanco";
-    if (domain.startsWith("musica")) return "La Casa Sorda";
-    return "La Casa in Penombra";
-  }
-  if (genre.startsWith("Realismo")) {
-    if (domain.startsWith("cucina")) return "La Casa delle Spezie";
-    if (domain.startsWith("arti")) return "La Casa delle Finestre Dipinte";
-    if (domain.startsWith("sport")) return "La Casa che Respira";
-    if (domain.startsWith("musica")) return "La Casa delle Corde Mute";
-    return "La Casa dalle Pareti Larghe";
-  }
-  if (domain.startsWith("cucina")) return "La Casa delle Pentole";
-  if (domain.startsWith("arti")) return "La Casa Museo";
-  if (domain.startsWith("sport")) return "La Casa del Divano";
-  return "La Casa del Divano";
-}
-
-// Un nome di luogo non può dichiarare un mestiere che i dati non documentano
-// («L'Officina…», «L'Ufficio…»): il sostantivo dice solo la funzione.
-export function isInventedTradeName(name) {
-  return /^(?:l['’]\s*|la |il |lo )?(?:officina|fabbrica|ufficio|studio|negozio|vetrina|bottega|atelier)\b/i.test(
-    String(name || "").trim()
-  );
-}
-
-const FUNCTION_NOUN_BY_KIND = { work: "Lavoro", cafe: "Locale", park: "Giardino", street: "Via", unknown: "Luogo" };
-
-// «L'Officina dei Registri» per un luogo di lavoro diventa «Il Lavoro dei
-// Registri»: si tiene l'epiteto e si toglie il mestiere non documentato.
-// Scartare il nome lasciava il luogo senza battesimo, e ogni giorno ne nasceva
-// uno diverso. Senza complemento («L'Officina Silenziosa») il nome si scarta.
-export function coerceTradeName(name, locationId = "") {
-  const source = String(name || "").trim();
-  if (!isInventedTradeName(source)) return source;
-  const rest = source.match(/^(?:l['’]\s*|la |il |lo )?(?:officina|fabbrica|ufficio|studio|negozio|vetrina|bottega|atelier)(\s+d(?:i|el|ell['’]|ella|elle|ei|egli|ello)\b.*)$/i)?.[1];
-  const kind = String(locationId).match(/^loc_(work|cafe|park|street|unknown)/)?.[1];
-  if (!rest || !kind) return "";
-  return `Il ${FUNCTION_NOUN_BY_KIND[kind]}${rest}`.replace(/^Il Luogo/, "Il Luogo").replace(/^Il Via/, "La Via");
-}
-
-export function isProvisionalAlias(alias) {
-  return /^luogo sconosciuto/i.test(String(alias || "").trim());
 }
 
 const HEARTBEAT = /\b(?:cuore|battit\w*|polso|pulsazion\w*|cardiac\w*)\b/gi;
@@ -170,19 +119,49 @@ function echoToken(raw) {
     .replace(/[^a-z]/g, "");
 }
 
-const PROVISIONAL_PHRASES = [
-  "luogo di fatica quotidiana",
-  "orari fissi e stanze chiuse",
-  "tratto di strada urbana",
-  "giardino pubblico con panchine",
-  "locale con tavoli, in mezzo agli altri",
-  "luogo mai nominato prima",
-  "luogo sconosciuto",
-];
+// I luoghi sono veri: in pagina entrano solo quelli dei dati. Una via, una
+// piazza o un parco con un nome che i dati non conoscono è un luogo inventato;
+// lo è anche un nome letterario alla vecchia maniera («la Casa delle Spezie»).
+const PLACE_NOUNS = ["via", "viale", "corso", "piazza", "piazzale", "largo", "vicolo", "strada", "lungotevere", "lungomare", "lungarno", "ponte", "parco", "giardino", "giardini", "villa", "galleria", "borgo", "rione", "quartiere", "calata", "salita", "ripa", "alzaia"];
+const AREA_NOUNS = new Set(["quartiere", "rione", "borgo"]);
+const nounClass = PLACE_NOUNS.map((noun) => `[${noun[0].toUpperCase()}${noun[0]}]${noun.slice(1)}`).join("|");
+const PLACE_NAME = new RegExp(
+  `(?<![\\p{L}])(${nounClass})\\s+((?:(?:d(?:i|el|ella|ello|egli|ei|elle|ell['’])|de['’]|degli)\\s+)?[A-ZÀ-Ý][\\p{L}'’]*(?:\\s+(?:(?:d(?:i|el|ella|ei|egli|elle|ell['’]))\\s+)?(?:[A-ZÀ-Ý][\\p{L}'’]*|[IVX]+\\b))*)`,
+  "gu"
+);
+const LITERARY_NAME = /(?<![\p{L}])(?:Casa|Tavolo|Giardino|Lavoro|Locale|Luogo|Cortile|Archivio|Lanterna|Fornace|Rifugio|Torchio)\s+d(?:i|el|ella|elle|ei|egli|ell['’])\s*[A-ZÀ-Ý][\p{L}'’]*(?:\s+[A-ZÀ-Ý][\p{L}'’]*)*/gu;
 
-export function findProvisionalLeaks(text) {
-  const source = String(text || "").toLowerCase();
-  return PROVISIONAL_PHRASES.filter((phrase) => source.includes(phrase));
+function plain(text) {
+  return String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[’]/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function findInventedPlaces(text, allowed = []) {
+  const known = allowed.map(plain).filter(Boolean);
+  const found = new Set();
+  const source = String(text || "");
+  for (const match of source.matchAll(PLACE_NAME)) {
+    const noun = match[1].toLowerCase();
+    const name = plain(match[2]);
+    const full = plain(match[0]);
+    const ok = AREA_NOUNS.has(noun)
+      ? known.some((item) => item.includes(name))
+      : known.some((item) => item.includes(full));
+    if (!ok) found.add(match[0].trim());
+  }
+  for (const match of source.matchAll(LITERARY_NAME)) {
+    const name = match[0].trim();
+    const seen = [...found].some((item) => item.includes(name) || name.includes(item));
+    // «Casa di Marco» non è un nome inventato: è la casa di qualcuno che i dati conoscono.
+    const owner = plain(name).replace(/^\S+\s+d\S*\s*/, "");
+    if (!seen && !known.includes(owner) && !known.some((item) => item.includes(plain(name)))) found.add(name);
+  }
+  return [...found].slice(0, 6);
 }
 
 const TIME_LED = /^(alle|all'|a mezzogiorno|a mezzanotte|verso le|poco prima delle|poco dopo le|nel primo pomeriggio|in serata)\b/i;
@@ -279,7 +258,7 @@ function minutePhrase(minute) {
 
 // Il risveglio arriva al narratore come dato, non come frase fatta:
 // una formula pronta finiva ricopiata in apertura di ogni capitolo.
-export function wakeTranslation(_genre, time) {
+export function wakeTranslation(time) {
   if (!time) return "Risveglio senza un'ora precisa. Dato di contorno: si racconta solo se serve alla storia.";
   const hour = Number(time.slice(0, 2));
   const moment = hour < 6 ? "prima dell'alba, molto presto" : hour >= 9 ? "tardi rispetto al mattino" : "a un'ora consueta del mattino";
@@ -341,7 +320,7 @@ const MOMENT = {
   SLOT_4_EVENING: "soprattutto la sera",
 };
 
-export function screenBehavior(genre, slots, gender = "M") {
+export function screenBehavior(slots, gender = "M") {
   const doomMinutes = slots.reduce((sum, slot) => sum + (Number(slot.doomscrolling_minutes) || 0), 0);
   const messageMinutes = slots.reduce((sum, slot) => sum + (Number(slot.messaging_minutes) || 0), 0);
   const doomLevel = intensity(doomMinutes);
@@ -410,37 +389,6 @@ export function biometricVibe(place) {
   }
 
   return bits.join(", ");
-}
-
-const HINTS = {
-  home: "interno domestico",
-  work: "luogo di fatica quotidiana, orari fissi e stanze chiuse",
-  park: "giardino pubblico con panchine e alberi",
-  cafe: "locale con tavoli, in mezzo agli altri",
-  street: "tratto di strada urbana",
-  unknown: "luogo mai nominato prima",
-};
-
-export function resolveLocation(place, storyState, genre, metaphorDomain) {
-  const kind = place.kind || "home";
-  const zone = String(place.zone || "")
-    .toLowerCase()
-    .replace(/[^a-z]/g, "");
-  const base = kind === "street" || kind === "unknown" ? `loc_${kind}_${zone || "generica"}` : `loc_${kind}`;
-  const novelKey = `${base}_new`;
-  const known = storyState?.established_locations || {};
-
-  if (known[base]) return { location_id: base, location_alias: known[base] };
-  if (known[novelKey]) return { location_id: novelKey, location_alias: known[novelKey] };
-  if (kind === "home") {
-    return { location_id: "loc_home", location_alias: homeAlias(genre, metaphorDomain) };
-  }
-
-  const zonePart = zone ? `, zona ${zone}` : "";
-  return {
-    location_id: novelKey,
-    location_alias: `Luogo sconosciuto (${HINTS[kind] || "sosta"}${zonePart})`,
-  };
 }
 
 export function slotWindow(slotId) {
@@ -588,6 +536,10 @@ const DATA_LEAKS = [
   /\bumidità (?:moderata|elevata|alta|bassa|lieve)\b/gi,
   /\bcausa ignota\b/gi,
   /\bdati\b/gi,
+  // L'agenda vive nella testa del protagonista, mai come oggetto.
+  /\bagenda\b/gi,
+  /\bcalendari[oa]?\b/gi,
+  /\bpromemoria\b/gi,
 ];
 
 const MINUTE_WORDS =

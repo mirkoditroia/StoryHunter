@@ -25,24 +25,26 @@ test("il materiale drammatico mette in testa appunti, luoghi nuovi e picchi da f
 test("il ponte da ieri riparte dal cliffhanger e dalla sua ultima frase", () => {
   const payload = structuredClone(samplePayload);
   payload.story_state_memory.last_chapter_ending_state = "OUTSIDE_CLIFFHANGER";
-  payload.story_state_memory.last_scene = { place: "Il Luogo della Soglia", when: "da poco dopo le ventuno a mezzanotte" };
+  payload.story_state_memory.last_scene = { place: "via Pacini", at: "in via Pacini", when: "da poco dopo le ventuno a mezzanotte" };
   payload.today_unified_telemetry.unified_scenes = [
-    { time_window: "00:17 - 05:25", location_id: "loc_home", location_alias: "La Casa", user_notes: [] },
+    { time_window: "00:17 - 05:25", location_id: "loc_home", location_alias: "casa", location_at: "a casa", user_notes: [] },
     ...payload.today_unified_telemetry.unified_scenes,
   ];
   payload.story_state_memory.closings = ["Che cosa lo trattiene ancora sulla soglia?"];
   const bridge = bridgeFromYesterday(payload);
-  assert.match(bridge, /Ieri il capitolo si è chiuso a Il Luogo della Soglia/);
+  assert.match(bridge, /Ieri il capitolo si è chiuso in via Pacini/);
   assert.match(bridge, /Ultima frase di ieri: «Che cosa lo trattiene ancora sulla soglia\?»/);
   assert.match(bridge, /Oggi si riparte da lì, dalla mezzanotte: la prima traccia lo trova già a casa poco dopo mezzanotte/);
   assert.doesNotMatch(bridge, /documentat/);
-  // Nel blocco finale la preposizione è già articolata.
+  // Una memoria scritta prima dei luoghi veri non ha `at`: la preposizione si articola lo stesso.
+  payload.story_state_memory.last_scene = { place: "Il Luogo della Soglia", when: "a mezzanotte" };
   assert.match(materialBlock(payload), /chiuso al Luogo della Soglia/);
 });
 
-test("l'ultima scena entra nella memoria con il nome battezzato", () => {
-  const last = lastSceneOf(samplePayload, { loc_unknown_est_new: "Il Cortile della Pioggia" });
-  assert.equal(last.place, "Il Cortile della Pioggia");
+test("l'ultima scena entra nella memoria con il suo nome vero e il modo di dirlo", () => {
+  const last = lastSceneOf(samplePayload);
+  assert.equal(last.place, "via Pacini");
+  assert.equal(last.at, "in via Pacini");
   assert.match(last.when, /verso le diciannove e mezza/);
 });
 
@@ -91,25 +93,20 @@ test("un copione senza desiderio o domanda finale non si usa", () => {
     {
       through_line: "Tornerà de La Panchina?",
       desiderio: "tornare alla panchina",
-      nuovi_luoghi: { loc_unknown_est_new: "Il Cortile della Pioggia", loc_inventato: "Altrove" },
+      nuovi_luoghi: { loc_unknown_via_pacini: "Il Cortile della Pioggia" },
       atto_2: { scene: [{ luogo: "Il Giardino", obiettivo: "sedersi" }], svolta: "il risotto" },
       atto_3: { domanda_finale: "chi lo aspettava?" },
     },
     samplePayload
   );
   assert.equal(plan.through_line, "Tornerà della Panchina?");
-  assert.deepEqual(plan.nuovi_luoghi, { loc_unknown_est_new: "Il Cortile della Pioggia" });
+  // I luoghi non si battezzano più: un nome proposto dal copione si ignora.
+  assert.equal("nuovi_luoghi" in plan, false);
 });
 
-test("il copione toglie i mestieri non documentati dai nomi di luogo", () => {
-  const plan = normalizePlan(
-    {
-      desiderio: "tornare a ovest",
-      nuovi_luoghi: { loc_unknown_est_new: "L'Officina delle Ombre" },
-      atto_2: { scene: [{ luogo: "Via", obiettivo: "camminare" }] },
-      atto_3: { domanda_finale: "tornerà?" },
-    },
-    samplePayload
-  );
-  assert.deepEqual(plan.nuovi_luoghi, { loc_unknown_est_new: "Il Luogo delle Ombre" });
+test("il materiale nomina i luoghi veri e non chiede battesimi", () => {
+  const block = materialBlock(samplePayload);
+  assert.doesNotMatch(block, /battezz|ancora senza nome|Luogo sconosciuto/);
+  assert.match(block, /LUOGO NUOVO NEL LIBRO — via Pacini \(Città Studi, Milano\)/);
+  assert.ok(dramaticEvents(samplePayload).some((event) => /APPUNTO — Parco Sempione/.test(event)));
 });

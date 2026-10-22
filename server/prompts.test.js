@@ -1,13 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { samplePayload } from "./sample.js";
-import { arcAct, buildClosingPrompt, buildPlanPrompt, buildSystemPrompt, buildUserPrompt } from "./prompts.js";
+import { arcAct, buildClosingPrompt, buildPlanPrompt, buildSystemPrompt, buildUserPrompt, dayView, plainBody, plainWeather } from "./prompts.js";
 import { countHeartbeats, findEchoes, findMeasures } from "./transfiguration.js";
 
 const plan = {
   through_line: "Marco riuscirà a dire le parole rimaste sospese?",
   desiderio: "tornare alla panchina di ieri prima che il gabbiano se ne vada",
-  atto_2: { scene: [{ luogo: "Il Giardino delle Statue Mute", obiettivo: "sedersi" }], svolta: "il risotto bruciato" },
+  atto_2: { scene: [{ luogo: "Parco Sempione", obiettivo: "sedersi" }], svolta: "il risotto bruciato" },
   atto_3: { domanda_finale: "chi era seduto al tavolo con lui?" },
 };
 
@@ -46,7 +46,8 @@ test("il narratore segue il copione e conosce i divieti di scena", () => {
   assert.match(system, /va a dormire/);
   assert.match(system, / OUTSIDE_CLIFFHANGER\./);
   assert.match(system, /550-800 parole, 6-9 paragrafi/);
-  assert.match(system, /Luoghi da battezzare ora/);
+  assert.match(system, /nei luoghi veri dei dati/);
+  assert.doesNotMatch(system, /battezz/);
   assert.match(user, /Controllo finale/);
   assert.match(user, /prima frase = immagine d'apertura/);
   assert.ok(system.length < 14000, `system prompt troppo lungo: ${system.length}`);
@@ -155,4 +156,38 @@ test("un filo nato in un giorno di sola routine resta provvisorio", () => {
   assert.match(system, /Filo conduttore provvisorio/);
   assert.match(system, /Oggi arriva l'incidente scatenante/);
   assert.match(system, /da questo seme: «Cosa farà Marco di ciò che ha scritto/);
+});
+
+test("ai modelli arriva una vista curata: luoghi veri, niente numeri dei sensori né campi tecnici", () => {
+  const view = dayView(samplePayload);
+  assert.equal(view.city, "Milano");
+  assert.deepEqual(view.scenes.map((scene) => scene.at), ["al lavoro, in via Dante", "al Parco Sempione", "in via Pacini"]);
+  const blob = JSON.stringify(view);
+  assert.doesNotMatch(blob, /bpm|SpO2|°|%|km\/h|HR |slot_origin|location_id|tachicardia/);
+  assert.match(view.scenes[2].body, /il battito sale all'improvviso a corpo fermo, poco dopo le ventuno/);
+
+  const user = buildUserPrompt(samplePayload);
+  assert.doesNotMatch(user, /established_locations|seen_locations|event_log|story_state_memory|bpm/);
+  assert.match(user, /"previous_chapter_summary"/);
+  assert.ok(user.length < JSON.stringify(samplePayload, null, 2).length);
+});
+
+test("meteo e corpo detti a parole", () => {
+  assert.equal(plainWeather("Coperto e umido, 6°, umidità 73%"), "coperto e umido, freddo");
+  assert.equal(plainWeather("Pioggia moderata, 9°, raffiche a 28 km/h"), "pioggia moderata, freddo, raffiche, forte");
+  assert.equal(plainWeather("Sereno, 22°, vento da nord-est 6 km/h"), "sereno, mite, vento da nord-est");
+  assert.equal(plainBody("Corpo fermo, ritmo medio 52 bpm, stress lieve, SpO2 99%"), "corpo fermo, stress lieve");
+  assert.equal(plainBody("Passo rapido, ritmo medio 128 bpm, stress alto, picco di battito alle 19:05 (HR 156 bpm, SpO2 97%)"), "passo rapido, stress alto, fatica del passo");
+});
+
+test("i prompt chiedono luoghi veri e vietano quelli inventati", () => {
+  const narrator = buildSystemPrompt(samplePayload, plan);
+  assert.match(narrator, /La storia si svolge a Milano, nei luoghi veri dei dati/);
+  assert.match(narrator, /La casa è «casa»/);
+  assert.match(narrator, /in quel di Milano/);
+  assert.match(narrator, /vietato inventare vie, piazze, parchi, locali, edifici/);
+  assert.doesNotMatch(narrator, /established_locations|battezz|nuovi_luoghi/);
+  const { system } = buildPlanPrompt(samplePayload);
+  assert.match(system, /6\. Luoghi: la storia si svolge a Milano/);
+  assert.doesNotMatch(system, /nuovi_luoghi|battezz/);
 });

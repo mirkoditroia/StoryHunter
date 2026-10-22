@@ -9,6 +9,7 @@ function slot(id, extra) {
     places: [],
     notes: [],
     notes_text: "",
+    calendar_events: [],
     ...extra,
   };
 }

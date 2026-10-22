@@ -8,7 +8,7 @@ dns.setDefaultResultOrder("ipv4first");
 import {
   DEFAULT_MODEL,
   GENDERS,
-  GENRES,
+  GENRE,
   MODELS,
   PLACE_KINDS,
   PROFILES,
@@ -56,7 +56,7 @@ app.get("/api/meta", async (_req, res, next) => {
   try {
     const llm = await llmStatus();
     res.json({
-      genres: GENRES,
+      genre: GENRE,
       genders: GENDERS,
       questions: QUESTIONS,
       profiles: PROFILES,

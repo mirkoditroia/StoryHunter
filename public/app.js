@@ -38,7 +38,6 @@ function blankForm() {
     age: 30,
     gender: "",
     total_days: 5,
-    genre: "",
     answers: { q1: "", q2: "", q3: "", q4: "", q5: "" },
   };
 }
@@ -166,43 +165,7 @@ function paintKeyHint(selector, info, label) {
   node.textContent = `Chiave ${label} ${where}: ${info.hint}`;
 }
 
-function lensOf(genre) {
-  if (!genre) return "";
-  if (genre.startsWith("Noir")) return "noir";
-  if (genre.startsWith("Realismo")) return "realismo";
-  if (genre.startsWith("Commedia")) return "commedia";
-  return "";
-}
-
-function selectedTrait(questionId) {
-  const question = state.meta?.questions.find((item) => item.id === questionId);
-  return question?.options.find((option) => option.id === state.form.answers[questionId]);
-}
-
-function homeAliasPreview(genre, metaphorDomain = "") {
-  const domain = String(metaphorDomain || "").toLowerCase();
-  if (genre.startsWith("Noir")) {
-    if (domain.startsWith("arti")) return "La Casa in Penombra";
-    if (domain.startsWith("cucina")) return "La Casa Fredda";
-    if (domain.startsWith("sport")) return "La Casa del Corpo Stanco";
-    if (domain.startsWith("musica")) return "La Casa Sorda";
-    return "La Casa in Penombra";
-  }
-  if (genre.startsWith("Realismo")) {
-    if (domain.startsWith("cucina")) return "La Casa delle Spezie";
-    if (domain.startsWith("arti")) return "La Casa delle Finestre Dipinte";
-    if (domain.startsWith("sport")) return "La Casa che Respira";
-    if (domain.startsWith("musica")) return "La Casa delle Corde Mute";
-    return "La Casa dalle Pareti Larghe";
-  }
-  if (domain.startsWith("cucina")) return "La Casa delle Pentole";
-  if (domain.startsWith("arti")) return "La Casa Museo";
-  if (domain.startsWith("sport")) return "La Casa del Divano";
-  return "La Casa del Divano";
-}
-
 function voiceReady() {
-  if (!state.form.genre) return false;
   return state.meta.questions.every((question) => state.form.answers[question.id]);
 }
 
@@ -217,7 +180,6 @@ function anagraficaProblems() {
 function formProblems() {
   const first = anagraficaProblems();
   if (first) return first;
-  if (!state.form.genre) return "Scegli il genere letterario.";
   const missing = state.meta.questions.find((question) => !state.form.answers[question.id]);
   if (missing) return `Manca una risposta: ${missing.title}.`;
   return "";
@@ -605,8 +567,7 @@ function render() {
     document.body.append(host);
   }
 
-  const genre = state.book?.book_config.genre || state.form.genre;
-  document.body.dataset.lens = lensOf(genre);
+  document.body.dataset.lens = "realismo";
   document.body.classList.toggle("is-premiere", Boolean(state.premiere) && state.view === "volume");
   $("#chrome").hidden = BARE_VIEWS.has(state.view);
   renderChrome();
@@ -759,7 +720,7 @@ function renderSoglia() {
       <div class="spine" style="--i:${index}">
         <button type="button" data-open="${esc(book.id)}">
           <strong>${esc(book.name)}</strong>
-          <small>${esc(book.genre)} · ${book.chapters}/${book.total_days} capitoli${book.complete ? " · completo" : ""}</small>
+          <small>${book.chapters}/${book.total_days} capitoli${book.complete ? " · completo" : ""}</small>
         </button>
         <div class="spine-actions">
           <button type="button" data-delete="${esc(book.id)}">Elimina</button>
@@ -838,32 +799,23 @@ function renderVoce() {
       <article class="paper" id="voce-form">
         <p class="eyebrow">La voce</p>
         <h2>Come verrà raccontato</h2>
-        <p class="lede">Due gesti: la lente del romanzo, poi cinque domande. In mezzo, se vuoi, un ritratto già scritto.</p>
-        <section class="voce-block" aria-labelledby="voce-lente-title">
-          <p class="voce-kicker">I</p>
-          <h3 class="voce-heading" id="voce-lente-title">La lente letteraria</h3>
-          <p class="voce-lead">Una sola. Fissa il clima, il lessico, ciò che la prosa può vedere.</p>
-          <div class="genre-row pick-list" role="group" aria-label="Lente letteraria">
-            ${state.meta.genres.map((genre) => renderPick(`data-genre="${esc(genre.id)}" data-lens="${lensOf(genre.id)}"`, `${esc(genre.short)} — ${esc(genre.blurb)}`, form.genre === genre.id)).join("")}
-          </div>
-        </section>
+        <p class="lede">Un romanzo di ${esc(state.meta.genre.short.toLowerCase())}: ${esc(state.meta.genre.blurb.charAt(0).toLowerCase() + state.meta.genre.blurb.slice(1))} Cinque domande decidono come guardarti; se vuoi, parti da un ritratto già scritto.</p>
         <aside class="voce-aside">
-          <p class="voce-kicker">Oppure</p>
+          <p class="voce-kicker">Un ritratto pronto</p>
           <p class="voce-lead">Parti da un ritratto già pronto. Compila nome, giorni e le domande.</p>
           <div class="preset-row pick-list" role="group" aria-label="Ritratti pronti">
             ${state.meta.profiles
               .map((profile) => {
-                const on = form.name === profile.name && form.genre === profile.genre;
+                const on = form.name === profile.name;
                 const cut = profile.label.indexOf("—");
                 const gloss = cut >= 0 ? profile.label.slice(cut + 1).trim() : "";
                 const copy = gloss ? `${esc(profile.name)} — ${esc(gloss)}` : esc(profile.name);
-                return renderPick(`data-profile="${esc(profile.id)}" data-lens="${lensOf(profile.genre)}"`, copy, on);
+                return renderPick(`data-profile="${esc(profile.id)}" data-lens="realismo"`, copy, on);
               })
               .join("")}
           </div>
         </aside>
         <section class="voce-block is-questions" aria-labelledby="voce-domande-title">
-          <p class="voce-kicker">II</p>
           <h3 class="voce-heading" id="voce-domande-title">Cinque domande</h3>
           <p class="voce-lead">Non è un test. Ogni risposta dice al narratore come guardarti.</p>
           <div class="questions">
@@ -907,23 +859,20 @@ function renderQuestion(question, index = 0) {
 
 function renderConferma() {
   const form = state.form;
-  const domain = selectedTrait("q1")?.value || "";
-  const alias = homeAliasPreview(form.genre, domain);
   const traits = state.meta.questions
     .map((question) => {
       const option = question.options.find((item) => item.id === form.answers[question.id]);
       return `<li>${esc(option ? option.value : "—")}</li>`;
     })
     .join("");
-  const genre = state.meta.genres.find((item) => item.id === form.genre);
   return `
     <section class="page conferma">
       <div class="conferma-inner">
-        <p class="eyebrow">La casa ha un nome</p>
-        <p class="home-alias">${esc(alias)}</p>
+        <p class="eyebrow">La città</p>
+        <p class="home-alias">La diranno i tuoi passi</p>
         <ul class="echo">
           <li>${esc(form.name)}, ${esc(form.age)} anni</li>
-          <li>${esc(genre?.short || form.genre)} · ${form.total_days} giorni</li>
+          <li>${form.total_days} giorni</li>
         </ul>
         <ul class="echo">${traits}</ul>
         <div class="page-nav" style="justify-content: center">
@@ -1017,6 +966,7 @@ function hydrateSlots(list) {
       wake_time: raw.wake_time || "",
       places: Array.isArray(raw.places) ? raw.places.map((place) => ({ ...blankPlace(def.id), ...place })) : [],
       notes,
+      calendar_events: Array.isArray(raw.calendar_events) ? raw.calendar_events.map((event) => ({ ...event })) : [],
       notes_text:
         raw.notes_text ||
         notes
@@ -1094,7 +1044,7 @@ function renderToday() {
       <article class="paper" id="taccuino-attivo">
         <p class="eyebrow">Taccuino attivo · giorno ${roman(day)} di ${roman(book.book_config.total_days)}</p>
         <h2>Scrivi, se serve.</h2>
-        <p class="lede">Il biografo guarda già il resto da solo: meteo, sveglia, spostamenti e battito arrivano da una giornata simulata. Qui restano solo gli appunti. Un rigo per volta; se c'è l'ora, mettila all'inizio.</p>
+        <p class="lede">Il biografo guarda già il resto da solo: meteo, sveglia, spostamenti, battito e impegni in agenda arrivano da una giornata simulata. Qui restano solo gli appunti. Un rigo per volta; se c'è l'ora, mettila all'inizio.</p>
         ${scenarioBar()}
         <label class="taccuino-field">Appunti
           <textarea id="day-notes" spellcheck="true" placeholder="13:40 Una frase, se vuoi.">${esc(state.notesText)}</textarea>
@@ -1129,7 +1079,6 @@ function publishOsservatorio() {
     book: {
       id: state.book.id,
       name: state.book.book_config.protagonist.name,
-      genre: state.book.book_config.genre,
       day: state.book.book_config.current_day,
       total: state.book.book_config.total_days,
     },
@@ -1165,7 +1114,7 @@ function renderStudio() {
       <article class="paper" id="osservatorio" data-at="${esc(live?.at || "")}">
         <p class="eyebrow">Osservatorio</p>
         <h2>Dati simulati della giornata</h2>
-        <p class="lede">Questa finestra non è il taccuino del lettore. Qui si vedono le quattro fasce che il merger riceve quando si chiude la giornata: meteo, sveglia, schermo, tappe, battito, appunti. I numeri imitano telefono e meteo.</p>
+        <p class="lede">Questa finestra non è il taccuino del lettore. Qui si vedono le quattro fasce che il merger riceve quando si chiude la giornata: meteo, sveglia, schermo, tappe, battito, agenda, appunti. I numeri imitano telefono e meteo.</p>
         ${
           live?.scenario
             ? `<p class="quiet">Combinazione: ${esc(live.scenario.name)}. ${esc(live.scenario.description)}</p>`
@@ -1173,7 +1122,7 @@ function renderStudio() {
         }
         ${
           book
-            ? `<p class="quiet">${esc(book.name)} · ${esc(book.genre)} · giorno ${roman(book.day)} di ${roman(book.total)} · ${esc(live.date || "")} · aggiornato alle ${esc(updated)}</p>`
+            ? `<p class="quiet">${esc(book.name)} · giorno ${roman(book.day)} di ${roman(book.total)} · ${esc(live.date || "")} · aggiornato alle ${esc(updated)}</p>`
             : `<p class="quiet">Apri il taccuino in un'altra finestra, oppure scegli un ciclo qui sotto. I dati arrivano in diretta mentre si scrive.</p>`
         }
         ${
@@ -1181,7 +1130,7 @@ function renderStudio() {
             ? `<div class="preset-row studio-books">${state.books
                 .map(
                   (item) =>
-                    `<button type="button" class="choice ${book?.id === item.id ? "is-on" : ""}" data-watch-book="${esc(item.id)}">${esc(item.name)} · ${esc(item.genre)}</button>`
+                    `<button type="button" class="choice ${book?.id === item.id ? "is-on" : ""}" data-watch-book="${esc(item.id)}">${esc(item.name)}</button>`
                 )
                 .join("")}</div>`
             : ""
@@ -1216,6 +1165,14 @@ function studioSlotCard(slot, def) {
         )
         .join("")
     : "<li>Nessuna tappa: il merger assume casa per tutta la fascia.</li>";
+  const agenda = slot.calendar_events?.length
+    ? slot.calendar_events
+        .map(
+          (event) =>
+            `<li>${event.all_day ? "tutto il giorno" : `${esc(event.start)}–${esc(event.end)}`} · ${esc(event.title || "senza titolo")}${event.recurring ? " · ricorrente" : ""}</li>`
+        )
+        .join("")
+    : "<li>Nessun impegno in calendario.</li>";
   return `
     <article class="studio-slot">
       <p class="eyebrow">${esc(label)} · ${esc(range)}</p>
@@ -1229,6 +1186,8 @@ function studioSlotCard(slot, def) {
       </ul>
       <p class="quiet">Tappe</p>
       <ul>${places}</ul>
+      <p class="quiet">Agenda</p>
+      <ul>${agenda}</ul>
     </article>`;
 }
 
@@ -1650,7 +1609,6 @@ function applyProfile(profile) {
     age: profile.age,
     gender: profile.gender,
     total_days: profile.total_days,
-    genre: profile.genre,
     answers: { ...profile.answers },
   };
   go("voce", "enter-forward");
@@ -1671,7 +1629,7 @@ async function createCycle() {
     state.books = (await api("/api/books")).books;
     go("today", "enter-forward");
     publishOsservatorio();
-    setBanner("ok", `Ciclo di ${book.book_config.protagonist.name} aperto. La casa si chiama ${book.story_state.established_locations.loc_home}.`);
+    setBanner("ok", `Ciclo di ${book.book_config.protagonist.name} aperto.`);
   } catch (error) {
     setBanner("error", error.message);
   } finally {
@@ -2026,7 +1984,6 @@ async function onClick(event) {
   const open = event.target.closest("[data-open]");
   const remove = event.target.closest("[data-delete]");
   const gender = event.target.closest("[data-gender]");
-  const genre = event.target.closest("[data-genre]");
   const answer = event.target.closest("[data-answer]");
   const view = event.target.closest("[data-view]");
   const back = event.target.closest("[data-back]");
@@ -2078,15 +2035,6 @@ async function onClick(event) {
   if (gender) {
     state.form.gender = gender.dataset.gender;
     markPressed("[data-gender]", state.form.gender, "data-gender");
-    return;
-  }
-  if (genre) {
-    state.form.genre = genre.dataset.genre;
-    document.body.dataset.lens = lensOf(state.form.genre);
-    markPressed("[data-genre]", state.form.genre, "data-genre");
-    const next = $("#to-conferma");
-    if (next) next.disabled = !voiceReady();
-    syncAmbience();
     return;
   }
   if (answer) {

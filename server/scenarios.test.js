@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mergeDay } from "./merger.js";
-import { homeAlias } from "./transfiguration.js";
+
 import { profileFromAnswers } from "./meta.js";
 import {
   applySimulatedTelemetry,
@@ -43,7 +43,7 @@ function book() {
       previous_chapter_summary: "Nessun capitolo precedente.",
       last_chapter_ending_state: "AT_HOME_RESTING",
       established_locations: {
-        loc_home: homeAlias("Realismo Magico", traits.metaphor_domain),
+        loc_home: "casa",
       },
       recurring_motifs: [],
       unresolved_tensions: [],
@@ -224,7 +224,9 @@ test("le combinazioni chiave producono una giornata plausibile", () => {
   assert.equal(officeToday.wake_up_event.time, "07:00");
   assert.equal(officeToday.is_empty_day, false);
   assert.equal(officeToday.midnight_cutoff_status, "AT_HOME_RESTING");
-  assert.ok(officeToday.unified_scenes.some((scene) => scene.location_id === "loc_work_new"));
+  const work = officeToday.unified_scenes.find((scene) => /^loc_work_/.test(scene.location_id));
+  assert.match(work.location_alias, /^il lavoro in (?:via|corso|viale|piazza|alzaia|ripa) /);
+  assert.ok(work.location_area.endsWith(`, ${office.book_config.city}`));
   assert.match(officeToday.weather_daily_arc, /8°/);
 
   const night = mergeDay({

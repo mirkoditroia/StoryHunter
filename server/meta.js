@@ -1,20 +1,11 @@
-export const GENRES = [
-  {
-    id: "Noir / Hardboiled",
-    short: "Noir",
-    blurb: "Ombre, dispacci, stanze che non perdonano.",
-  },
-  {
-    id: "Realismo Magico",
-    short: "Realismo magico",
-    blurb: "Il quotidiano si dilata e gli oggetti ricordano.",
-  },
-  {
-    id: "Commedia Brillante",
-    short: "Commedia",
-    blurb: "Ritmo di scena, ironia e imprevisti.",
-  },
-];
+// Un solo genere per tutti i romanzi: un registro unico rende la prosa e i
+// prompt stabili, e permette di tarare la pipeline su un'unica voce.
+// La personalizzazione resta nelle cinque domande (lente, ritmo, sguardo).
+export const GENRE = {
+  id: "Realismo Magico",
+  short: "Realismo magico",
+  blurb: "Il quotidiano si dilata e gli oggetti ricordano.",
+};
 
 export const GENDERS = [
   { id: "F", label: "Donna" },
@@ -278,32 +269,29 @@ export const QUESTIONS = [
 export const PROFILES = [
   {
     id: "marco",
-    label: "Marco — Realismo magico — cucina",
+    label: "Marco — cucina",
     name: "Marco",
     age: 27,
     gender: "M",
     total_days: 5,
-    genre: "Realismo Magico",
     answers: { q1: "B", q2: "A", q3: "B", q4: "A", q5: "D" },
   },
   {
     id: "elena",
-    label: "Elena — Noir — arti visive",
+    label: "Elena — arti visive",
     name: "Elena",
     age: 34,
     gender: "F",
     total_days: 7,
-    genre: "Noir / Hardboiled",
     answers: { q1: "A", q2: "D", q3: "A", q4: "A", q5: "C" },
   },
   {
     id: "chiara",
-    label: "Chiara — Commedia brillante — sguardo satirico",
+    label: "Chiara — sguardo satirico",
     name: "Chiara",
     age: 29,
     gender: "F",
     total_days: 3,
-    genre: "Commedia Brillante",
     answers: { q1: "A", q2: "A", q3: "A", q4: "C", q5: "D" },
   },
 ];

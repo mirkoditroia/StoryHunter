@@ -1,8 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { homeAlias } from "./transfiguration.js";
-import { profileFromAnswers } from "./meta.js";
+import { GENRE, profileFromAnswers } from "./meta.js";
 import { HttpError } from "./errors.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -93,8 +92,6 @@ export function createBook(input) {
   if (!Number.isInteger(total) || total < 3 || total > 7) {
     throw new HttpError(400, "Il ciclo del prototipo dura da 3 a 7 giorni.");
   }
-  const genres = new Set(["Noir / Hardboiled", "Realismo Magico", "Commedia Brillante"]);
-  if (!genres.has(input.genre)) throw new HttpError(400, "Genere letterario non previsto.");
 
   let traits;
   try {
@@ -115,7 +112,7 @@ export function createBook(input) {
     book_config: {
       total_days: total,
       current_day: 1,
-      genre: input.genre,
+      genre: GENRE.id,
       protagonist,
     },
     story_state: {
@@ -124,7 +121,7 @@ export function createBook(input) {
       previous_chapter_summary: "Nessun capitolo precedente. La storia inizia oggi.",
       last_chapter_ending_state: "AT_HOME_RESTING",
       established_locations: {
-        loc_home: homeAlias(input.genre, protagonist.metaphor_domain),
+        loc_home: "casa",
       },
       recurring_motifs: [],
       unresolved_tensions: [],
@@ -147,7 +144,6 @@ export function summarize(book) {
     chapters: written,
     complete: written >= book.book_config.total_days,
     updated_at: book.updated_at,
-    home: book.story_state?.established_locations?.loc_home || "",
   };
 }
 

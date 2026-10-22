@@ -1,4 +1,5 @@
-import { fixPrepositions, isProvisionalAlias, roughClock } from "./transfiguration.js";
+import { fixPrepositions, roughClock } from "./transfiguration.js";
+import { OUTSIDE_KINDS } from "./calendar.js";
 
 // Analisi drammaturgica fatta dal codice, prima di qualsiasi chiamata al modello.
 // Un modello piccolo, davanti a una lista di fasce orarie, scrive cronaca:
@@ -40,41 +41,19 @@ function kindOf(scene) {
   return match ? match[1] : "unknown";
 }
 
-function placeName(scene, memory) {
-  const known = memory?.established_locations?.[scene.location_id];
-  if (known && !isProvisionalAlias(known)) return known;
-  if (isProvisionalAlias(scene.location_alias)) {
-    const hint = provisionalHint(scene.location_alias);
-    return `un luogo ancora senza nome${hint ? ` (${hint})` : ""}`;
-  }
-  return scene.location_alias || "un luogo";
+// I luoghi sono veri e arrivano già con il loro nome dai dati:
+// `location_alias` è il nome («Parco Sempione», «casa»),
+// `location_at` il modo di dirlo («al Parco Sempione», «a casa, all'Isola»).
+function placeName(scene) {
+  return scene?.location_alias || "un luogo";
 }
 
-// Per i semi del filo: un luogo ancora senza nome si dice con la sua funzione
-// («al lavoro»), mai con la nota di regia «un luogo ancora senza nome».
-const WHERE_BY_KIND = { work: "al lavoro", cafe: "al locale", park: "al giardino", street: "per strada", home: "a casa", unknown: "in quel luogo" };
-const WHAT_BY_KIND = { work: "il lavoro", cafe: "il locale", park: "il giardino", street: "la strada", home: "la casa", unknown: "quel luogo" };
-
-function namedPlace(scene, memory) {
-  const known = memory?.established_locations?.[scene.location_id];
-  if (known && !isProvisionalAlias(known)) return known;
-  return isProvisionalAlias(scene.location_alias) ? "" : scene.location_alias || "";
+function whereOf(scene) {
+  return scene?.location_at || fixPrepositions(`a ${placeName(scene)}`);
 }
 
-function whereOf(scene, memory) {
-  const name = namedPlace(scene, memory);
-  return name ? fixPrepositions(`a ${name}`) : WHERE_BY_KIND[kindOf(scene)];
-}
-
-function whatOf(scene, memory) {
-  return namedPlace(scene, memory) || WHAT_BY_KIND[kindOf(scene)];
-}
-
-function provisionalHint(alias) {
-  return String(alias || "")
-    .replace(/^luogo sconosciuto\s*/i, "")
-    .replace(/^\(|\)$/g, "")
-    .trim();
+function whatOf(scene) {
+  return scene?.location_alias === "casa" ? "la casa" : placeName(scene);
 }
 
 // Eventi candidati a diventare dramma, dal più forte al più debole.
@@ -107,7 +86,7 @@ function rankedEvents(payload) {
   const weatherSeen = new Set();
 
   for (const scene of scenes) {
-    const name = placeName(scene, memory);
+    const name = placeName(scene);
     const start = sceneStart(scene);
     const end = sceneEnd(scene);
     const vibe = String(scene.biometric_vibe || "");
@@ -119,24 +98,23 @@ function rankedEvents(payload) {
           6,
           note.time || start,
           `APPUNTO — ${name} — ${roughClock(note.time || start)} — «${text}»`,
-          `Cosa farà ${who} di ciò che ha scritto ${whereOf(scene, memory)} («${text}»)?`
+          `Cosa farà ${who} di ciò che ha scritto ${whereOf(scene)} («${text}»)?`
         );
       }
     }
 
-    // Il primo giorno ogni luogo è senza nome solo perché il libro non lo
-    // conosce ancora: per chi vive quella vita è la strada di sempre. Con dati
-    // veri, «luogo mai visto» al giorno 1 inventerebbe un «primo giorno».
-    // Nuovo = mai comparso nei giorni precedenti, anche se non ha ancora un nome
-    // (un battesimo rifiutato ieri non fa del luogo di lavoro un luogo nuovo).
+    // Il primo giorno nessun luogo è nuovo: il libro lo incontra ora, ma per
+    // chi vive quella vita è la strada di sempre. Con dati veri, «luogo mai
+    // visto» al giorno 1 inventerebbe un «primo giorno».
+    // Nuovo = mai comparso nei giorni precedenti del libro.
     const visited = Array.isArray(memory.seen_locations) && memory.seen_locations.includes(scene.location_id);
-    if (day > 1 && !visited && !isHome(scene) && isProvisionalAlias(scene.location_alias) && kindOf(scene) !== "street") {
-      const hint = provisionalHint(scene.location_alias);
+    if (day > 1 && !visited && !isHome(scene) && kindOf(scene) !== "street") {
+      const area = scene.location_area ? ` (${scene.location_area})` : "";
       add(
         5,
         start,
-        `LUOGO NUOVO NEL LIBRO — ${hint || "senza indizi"} — ${span(start, end)}`,
-        `Che cosa è andato a cercare ${who} ${WHERE_BY_KIND[kindOf(scene)] || "in quel luogo"}, fuori dalle sue strade?`,
+        `LUOGO NUOVO NEL LIBRO — ${name}${area} — ${span(start, end)}`,
+        `Che cosa è andato a cercare ${who} ${whereOf(scene)}, fuori dalle sue strade?`,
         { kind: "new_place", location_id: scene.location_id }
       );
     }
@@ -149,7 +127,7 @@ function rankedEvents(payload) {
           6,
           at,
           `RICORRENZA — ${name} — ${roughClock(at)} — il sobbalzo da fermo torna (già ${daysLabel(before)}, stesso luogo): ${who} lo riconosce, non è più una sorpresa; il capitolo non lo ridescrive, mostra che cosa ne fa`,
-          `Quanto a lungo ${who} potrà fingere che ${whatOf(scene, memory)} non gli tolga il fiato?`,
+          `Quanto a lungo ${who} potrà fingere che ${whatOf(scene)} non gli tolga il fiato?`,
           { kind: "peak_at_rest", location_id: scene.location_id }
         );
       } else {
@@ -157,7 +135,7 @@ function rankedEvents(payload) {
           5,
           at,
           `PICCO A CORPO FERMO — ${name} — ${roughClock(at)} — causa ignota: nessun fatto la spiega`,
-          `Che cosa, ${whereOf(scene, memory)}, toglie il fiato a ${who} quando è fermo?`,
+          `Che cosa, ${whereOf(scene)}, toglie il fiato a ${who} quando è fermo?`,
           { kind: "peak_at_rest", location_id: scene.location_id }
         );
       }
@@ -172,13 +150,13 @@ function rankedEvents(payload) {
         5,
         start,
         `NOTTE FUORI CASA — ${name} — ${span(start, end)}: è la prima scena del capitolo, non un antefatto`,
-        `Che cosa tiene ${who} sveglio ${whereOf(scene, memory)} mentre la città dorme?`,
+        `Che cosa tiene ${who} sveglio ${whereOf(scene)} mentre la città dorme?`,
         { kind: "night_out", location_id: scene.location_id }
       );
     }
 
     const startMin = minutes(start);
-    if (!isHome(scene) && !isProvisionalAlias(scene.location_alias) && startMin != null && startMin >= 21 * 60) {
+    if (!isHome(scene) && startMin != null && startMin >= 21 * 60) {
       add(4, start, `FUORI A TARDA SERA — ${name} — ${roughClock(start)}`);
     }
 
@@ -186,7 +164,7 @@ function rankedEvents(payload) {
       add(3, start, `TENSIONE ALTA — ${name} — ${roughClock(start)}`);
     }
 
-    if (["park", "cafe"].includes(kindOf(scene)) && !isProvisionalAlias(scene.location_alias)) {
+    if (["park", "cafe"].includes(kindOf(scene))) {
       add(2, start, `SOSTA FUORI ROUTINE — ${name} — ${roughClock(start)}`);
     }
 
@@ -216,19 +194,113 @@ function rankedEvents(payload) {
     }
   }
 
+  calendarEvents(payload, add);
+
   const cutoff = today.midnight_cutoff_status;
   const last = scenes.at(-1);
   if (last && cutoff && cutoff !== "AT_HOME_RESTING") {
     add(
       5,
       sceneEnd(last),
-      `FINE GIORNATA FUORI CASA — ${placeName(last, memory)} — ${CUTOFF_LABEL[cutoff]}, senza rientro nel capitolo`,
-      `Che cosa tiene ${who} fuori casa fino a notte, ${whereOf(last, memory)}?`,
+      `FINE GIORNATA FUORI CASA — ${placeName(last)} — ${CUTOFF_LABEL[cutoff]}, senza rientro nel capitolo`,
+      `Che cosa tiene ${who} fuori casa fino a notte, ${whereOf(last)}?`,
       { kind: "late_out", location_id: last.location_id }
     );
   }
 
   return events.sort((a, b) => b.weight - a.weight || a.at - b.at).slice(0, 7);
+}
+
+// Agenda: un impegno è un programma. Il fatto è dove si trovava la persona
+// a quell'ora; il dramma è lo scarto (o la coincidenza) fra le due cose.
+// La routine ricorrente non entra nel materiale, solo nella riga «Agenda».
+function calendarEvents(payload, add) {
+  const today = payload.today_unified_telemetry || {};
+  const memory = payload.story_state_memory || {};
+  const scenes = today.unified_scenes || [];
+  const who = payload.book_config?.protagonist?.name || "il protagonista";
+  for (const event of today.calendar_events || []) {
+    if (event.recurring) continue;
+    const title = String(event.title || "").replace(/`/g, "'").trim();
+    if (!title) continue;
+    const quoted = `«${title}»`;
+    const health = event.kind === "health" ? " (salute: mai il motivo, mai dettagli del corpo)" : "";
+    if (event.all_day) {
+      add(4, "00:00", `GIORNO SEGNATO — ${quoted}${health} — tutto il giorno: una data che pesa sulla giornata; vive in un pensiero o in un gesto, mai una festa o un incontro inventati`);
+      continue;
+    }
+    const [start, end] = String(event.time_window || "").split(" - ");
+    const when = span(start, end && end !== start ? end : "");
+    const peak = peakDuring(scenes, start, end);
+    const coincide = peak ? ` — coincide con il sobbalzo da fermo, ${roughClock(peak)}` : "";
+    const ref = `cal:${title.toLowerCase()}`;
+    if (event.presence === "HOME" && OUTSIDE_KINDS.has(event.kind)) {
+      if (event.kind === "health") {
+        add(4, start, `IMPEGNO FUORI, MA A CASA — ${quoted}${health} — ${when} — a quell'ora ${who} era a casa: l'impegno non avviene; il perché si tace${coincide}`);
+        continue;
+      }
+      const before = pastEvents(memory, "calendar_home", ref);
+      const again = before.length ? ` Già successo ${daysLabel(before)}: è un riconoscimento, non una sorpresa.` : "";
+      add(
+        5,
+        start,
+        `IMPEGNO FUORI, MA A CASA — ${quoted} — ${when} — a quell'ora ${who} era a casa: l'impegno non avviene, né fuori né in una versione casalinga (niente allenamenti, cene o incontri in casa al suo posto); il perché si tace, al massimo un pensiero di ${who}${coincide}.${again}`,
+        `Che cosa ha trattenuto ${who} a casa all'ora di ${quoted}?`,
+        { kind: "calendar_home", location_id: ref }
+      );
+      continue;
+    }
+    if (event.presence === "AWAY") {
+      const where = atPlace(event);
+      add(4, start, `IMPEGNO — ${quoted}${health} — ${when} — a quell'ora ${who} era ${where}: la scena può essere quell'impegno, vissuto da dentro (attesa, sensi, pensiero); come è finito e che cosa si è detto, no${coincide}`);
+      continue;
+    }
+    if (event.presence === "IN_TRANSIT") {
+      add(3, start, `IMPEGNO — ${quoted}${health} — ${when} — a quell'ora ${who} era per strada, in movimento: mai dire dove andava${coincide}`);
+      continue;
+    }
+    if (event.presence === "HOME") {
+      add(3, start, `IMPEGNO — ${quoted} — ${when} — da sbrigare in casa${coincide}`);
+      continue;
+    }
+    add(2, start, `IMPEGNO — ${quoted}${health} — ${when} — nessuna tappa a quell'ora: l'impegno resta un pensiero`);
+  }
+}
+
+function peakDuring(scenes, start, end) {
+  const from = minutes(start);
+  const to = minutes(end) ?? from;
+  if (from == null) return "";
+  for (const scene of scenes) {
+    const vibe = String(scene.biometric_vibe || "");
+    if (!/tachicardia da fermo/i.test(vibe)) continue;
+    const at = vibe.match(/alle (\d{2}:\d{2})/)?.[1];
+    const value = minutes(at);
+    if (value != null && value >= from && value <= to) return at;
+  }
+  return "";
+}
+
+const PRESENCE_LABEL = { HOME: "a casa", IN_TRANSIT: "per strada", NO_TRACE: "nessuna tappa a quell'ora" };
+
+// Riga «Agenda» del materiale: tutti gli impegni, routine compresa.
+export function agendaOfToday(payload) {
+  return (payload.today_unified_telemetry?.calendar_events || []).map((event) => {
+    const title = `«${String(event.title || "").replace(/`/g, "'")}»`;
+    const [start, end] = String(event.time_window || "").split(" - ");
+    const when = event.all_day ? "tutto il giorno" : span(start, end && end !== start ? end : "");
+    const where = event.all_day
+      ? ""
+      : event.presence === "AWAY"
+        ? `, ${atPlace(event)}`
+        : `, ${PRESENCE_LABEL[event.presence] || "nessuna tappa a quell'ora"}`;
+    const routine = event.recurring ? " (ricorrente: routine della settimana)" : "";
+    return `${when} ${title}${routine}${where}`;
+  });
+}
+
+function atPlace(event) {
+  return whereOf({ location_alias: event.location_alias, location_at: event.location_at });
 }
 
 // Eventi forti di oggi, da archiviare: domani dicono al Drammaturgo che cosa
@@ -269,19 +341,19 @@ export function bridgeFromYesterday(payload) {
   const first = scenes[0];
   const closing = (memory.closings || []).filter(Boolean).at(-1);
   const yesterday = last
-    ? `Ieri il capitolo si è chiuso a ${last.place}, ${last.when}, ${CUTOFF_LABEL[ending] || "in casa"}.`
+    ? `Ieri il capitolo si è chiuso ${last.at || fixPrepositions(`a ${last.place}`)}, ${last.when}, ${CUTOFF_LABEL[ending] || "in casa"}.`
     : `Ieri il capitolo si è chiuso ${CUTOFF_LABEL[ending] || "in casa"}.`;
   const question = closing ? ` Ultima frase di ieri: «${closing}».` : "";
   if (!first || !endedOutside(memory)) return `${yesterday}${question}`;
-  const where = placeName(first, memory);
+  const where = whereOf(first);
   const when = roughClock(sceneStart(first));
   let resume;
   if (isHome(first)) {
     resume = ` Oggi si riparte da lì, dalla mezzanotte: la prima traccia lo trova già a casa ${when}. L'Atto I comincia con quel ritorno (la strada di notte, che cosa si porta dentro) ed è la risposta a come si è chiuso ieri; il tragitto si evoca, ciò che è accaduto nel mezzo non si inventa.`;
   } else if (last?.location_id && first.location_id === last.location_id) {
-    resume = ` Oggi si riparte da lì, in medias res: dopo la mezzanotte è ancora a ${where}. L'Atto I continua la scena di ieri.`;
+    resume = ` Oggi si riparte da lì, in medias res: dopo la mezzanotte è ancora lì, ${where}. L'Atto I continua la scena di ieri.`;
   } else {
-    resume = ` Oggi si riparte da lì: dopo la mezzanotte lo si ritrova a ${where}, ${when}. L'Atto I è quel passaggio, risposta a come si è chiuso ieri.`;
+    resume = ` Oggi si riparte da lì: dopo la mezzanotte lo si ritrova ${where}, ${when}. L'Atto I è quel passaggio, risposta a come si è chiuso ieri.`;
   }
   return `${yesterday}${question}${resume}`;
 }
@@ -302,8 +374,7 @@ export function nightOf(payload) {
   const away = night.filter((scene) => !isHome(scene));
   if (away.length) {
     if (resumed && night[0] === away[0] && away.length === night.length) return "";
-    const place = placeName(away[0], memory);
-    return fixPrepositions(`Notte: fuori casa, a ${place}, ${span(sceneStart(away[0]), sceneEnd(away.at(-1)))}. È la prima scena del capitolo: si racconta come scena, non come antefatto.`);
+    return fixPrepositions(`Notte: fuori casa, ${whereOf(away[0])}, ${span(sceneStart(away[0]), sceneEnd(away.at(-1)))}. È la prima scena del capitolo: si racconta come scena, non come antefatto.`);
   }
   if (night.every((scene) => /corpo fermo/i.test(scene.biometric_vibe || ""))) {
     const wake = today.wake_up_event?.time;
@@ -315,47 +386,16 @@ export function nightOf(payload) {
 }
 
 // Riassunto della scena finale, salvato nella memoria per il ponte di domani.
-export function lastSceneOf(payload, established = {}) {
+export function lastSceneOf(payload) {
   const scenes = payload.today_unified_telemetry?.unified_scenes || [];
   const last = scenes.at(-1);
   if (!last) return null;
-  const name = established[last.location_id] && !isProvisionalAlias(established[last.location_id])
-    ? established[last.location_id]
-    : last.location_alias;
   return {
     location_id: last.location_id,
-    place: name,
+    place: placeName(last),
+    at: whereOf(last),
     when: span(sceneStart(last), sceneEnd(last)),
   };
-}
-
-const FUNCTION_NOUN = [
-  [/_work_/, "Lavoro"],
-  [/_park_/, "Parco/Giardino"],
-  [/_cafe_/, "Locale/Tavolo"],
-  [/_street_/, "Via/Cammino"],
-  [/_home/, "Casa"],
-];
-
-function functionNoun(locationId) {
-  for (const [pattern, noun] of FUNCTION_NOUN) if (pattern.test(locationId)) return noun;
-  return "Luogo";
-}
-
-export function placesToBaptize(payload) {
-  const scenes = payload.today_unified_telemetry?.unified_scenes || [];
-  const known = payload.story_state_memory?.established_locations || {};
-  const found = new Map();
-  for (const scene of scenes) {
-    const id = String(scene.location_id || "");
-    const alias = String(scene.location_alias || "");
-    const established = String(known[id] || "");
-    const needsName = id.endsWith("_new") && isProvisionalAlias(alias) && (!established || isProvisionalAlias(established));
-    if (needsName && !found.has(id)) {
-      found.set(id, `${id} → sostantivo ${functionNoun(id)} (indizio: ${provisionalHint(alias) || "nessuno"})`);
-    }
-  }
-  return [...found.values()];
 }
 
 export function peaksAtRest(payload) {
@@ -382,7 +422,7 @@ export function materialBlock(payload) {
   const notes = notesOfToday(payload);
   const peaks = peaksAtRest(payload);
   const events = dramaticEvents(payload);
-  const baptize = placesToBaptize(payload);
+  const agenda = agendaOfToday(payload);
   const bridge = bridgeFromYesterday(payload);
   const night = nightOf(payload);
   const threads = (payload.story_state_memory?.unresolved_tensions || []).filter(Boolean);
@@ -404,14 +444,18 @@ export function materialBlock(payload) {
       ? `Appunti di oggi (modo vincolante: registrati nelle scene indicate; un programma resta programma, mai esito, mai spostato nel luogo che nomina): ${notes.join("; ")}.`
       : "Appunti di oggi: nessuno."
   );
+  if (agenda.length) {
+    lines.push(
+      `Impegni di oggi (programmi: titolo e ora sono fatti, l'esito no; dove si trovava a quell'ora lo dicono le scene, e vince sempre): ${agenda.join("; ")}.`
+    );
+  }
   lines.push(
     peaks.length
       ? `Picchi a corpo fermo: ${peaks.join("; ")} — unico momento in cui il corpo può entrare nel racconto.`
       : "Picchi a corpo fermo: nessuno — il corpo non entra nel racconto."
   );
-  if (baptize.length) lines.push(`Luoghi da battezzare ora: ${baptize.join("; ")}.`);
-  if (day <= 1 && baptize.length) {
-    lines.push("Primo capitolo: i luoghi si battezzano oggi perché il libro li incontra ora, ma per chi vive questa vita sono quelli di sempre — mai «per la prima volta», mai «primo giorno», salvo un appunto che lo dica.");
+  if (day <= 1) {
+    lines.push("Primo capitolo: il libro incontra ora questi luoghi, ma per chi vive questa vita sono quelli di sempre — mai «per la prima volta», mai «primo giorno», salvo un appunto che lo dica.");
   }
   return fixPrepositions(lines.join("\n")).replace(/\ba un luogo\b/g, "in un luogo");
 }

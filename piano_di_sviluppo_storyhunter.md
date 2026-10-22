@@ -7,6 +7,7 @@
 ### Pilastri Progettuali Definiti
 
 1. **Trasfigurazione Metaforica Totale:** Il narratore non rompe mai la quarta parete tecnologica. Parole come *smartphone, WhatsApp, Instagram, GPS, notifiche* o *smartwatch* sono bandite e sostituite da metafore coerenti con il genere letterario scelto.
+1-bis. **Luoghi Veri:** La storia si svolge nella città vera e nei luoghi veri dei dati (vie, piazze, parchi, quartieri dal reverse geocoding), chiamati con il loro nome e detti come li direbbe chi ci vive (*«in quel di Milano»*, *«in Vittorio Emanuele»*). La casa è «casa», al massimo con il quartiere. Vietato inventare vie, locali, insegne o nomi letterari dei luoghi.
 2. **Infallibilità Poetica (Zero Editing):** Non è previsto l'editing del testo generato. Se i sensori rilevano un battito cardiaco accelerato mentre l'utente è fermo (magari per una rampa di scale o un caffè), il narratore lo interpreta come verità emotiva assoluta (paura, batticuore, suspense).
 3. **Continuità e Memoria di Stato:** I capitoli non sono episodi isolati ma seguono un arco drammaturgico progressivo ($3\text{--}7$ giorni nel prototipo), mantenendo memoria di luoghi, personaggi e tensioni irrisolte.
 4. **Lettura a Scelta (Capitoli Sigillati):** Ogni capitolo generato entra nel *Taccuino del Narratore* come "sigillato". L'utente decide giorno per giorno se aprirlo subito o conservarlo per scoprire l'intero romanzo impaginato solo alla fine del periodo.
@@ -34,9 +35,9 @@ Per la fase di prototipazione, il focus mobile primario è **Android**, poiché 
 
 All'apertura dell'app, prima di iniziare il ciclo di tracciamento, l'utente configura il proprio profilo e le regole del libro:
 
-1. **Dati Anagrafici:** Nome, Età, Genere.
+1. **Dati Anagrafici:** Nome, Età, Genere. La città non si chiede: arriva dal GPS (reverse geocoding delle tappe). Nel simulatore locale ogni libro ha un GPS simulato in una città fissa fra Milano, Roma, Torino, Bologna e Napoli.
 2. **Durata del Tracciamento (Prototipo):** Scelta tra un minimo di $3$ giorni e un massimo di $7$ giorni.
-3. **Genere Letterario:** Scelta tra *Noir / Hardboiled*, *Realismo Magico*, *Commedia Brillante*.
+3. **Genere Letterario:** unico e fisso, *Realismo Magico*: un solo registro rende stabili la prosa e i prompt. La personalizzazione passa dal questionario.
 4. **Questionario Attitudinale e sugli Interessi ($5$ Domande):** Determina la voce narrante, il ritmo della prosa e il vocabolario metaforico del protagonista.
 
 ### Matrice del Questionario di Onboarding
@@ -89,6 +90,7 @@ Durante il giorno l'app lavora offline salvando i dati nel database locale SQLit
 * **GPS & Meteo:** Registra un punto solo se l'utente si sposta di $> 200\text{ m}$ e crea una " Tappa" solo se la sosta dura $> 15\text{ min}$ (*Dwell Time*), chiamando l'API meteo solo al cambio di tappa.
 * **Biometria:** Calcola la media del battito ($\text{HR}$) e dello stress nel blocco orario, ma salva un evento puntuale (`peak_event`) solo se il battito varia di oltre $\pm 20\%$ rispetto alla baseline a riposo.
 * **Screen Time & Sveglia:** Interrogati tramite le API di sistema Android (`UsageStatsManager` e `AlarmManager`) solo alla fine di ogni fascia oraria.
+* **Calendario:** Gli impegni della giornata letti dal calendario di sistema (`CalendarContract` su Android, `EventKit` su iOS), con titolo, ora di inizio e fine, flag *tutto il giorno* e *ricorrente*. Ogni impegno viaggia nello slot in cui comincia (quelli di tutto il giorno nello Slot 1) come `calendar_events: [{ title, start, end, all_day, recurring }]`. Luogo, partecipanti e note dell'evento non lasciano il telefono.
 
 La giornata è divisa in **4 Fasce Orarie (Slot)**:
 1. **Slot 1 — Notte/Alba:** `00:00 – 05:59` (Utile per chi fa tardi la sera prima o per il sonno).
@@ -102,9 +104,10 @@ Alla scadenza di ciascuno slot (es. alle `06:00`, `12:00`, `18:00` e `23:59`, op
 Il modello AI **non riceve mai i 4 slot separati**. Alle `23:59` (o al trigger manuale dell'utente), una Cloud Function sul backend esegue il **Daily Merger**:
 1. Recupera dal database tutti gli slot ricevuti per quel giorno (`Slot 1..4`).
 2. Unisce le tappe geografiche, gli appunti manuali dell'utente e i picchi biometrici in una **timeline cronologica continua** (`scenes`).
-3. Calcola i totali giornalieri di utilizzo schermo/messaggistica e li trasforma nelle descrizioni metaforiche (`screen_behavior`).
-4. Incarna nel medesimo oggetto la configurazione del libro (`book_config`) e la memoria narrativa dei giorni precedenti (`story_state_memory`).
-5. Invia **un unico file JSON consolidato** all'API dell'LLM per generare il capitolo.
+3. Mette in fila gli impegni del calendario (`calendar_events`): ripulisce i titoli (niente link, codici, numeri, nomi di piattaforme; un impegno di salute diventa *«Appuntamento per la salute»*), li classifica (`work`, `social`, `sport`, `errand`, `travel`, `health`, `personal`) e affianca a ognuno il luogo in cui la persona si trovava davvero a quell'ora (`presence`: `HOME`, `AWAY`, `IN_TRANSIT`, `NO_TRACE`, `ALL_DAY`). L'impegno è un programma, la tappa è il fatto: lo scarto fra i due è materiale drammatico.
+4. Calcola i totali giornalieri di utilizzo schermo/messaggistica e li trasforma nelle descrizioni metaforiche (`screen_behavior`).
+5. Incarna nel medesimo oggetto la configurazione del libro (`book_config`) e la memoria narrativa dei giorni precedenti (`story_state_memory`).
+6. Invia **un unico file JSON consolidato** all'API dell'LLM per generare il capitolo.
 
 ---
 
@@ -119,6 +122,7 @@ Questo è l'esatto oggetto monolitico generato dal *Daily Merger* sul backend (o
     "total_days": 5,
     "current_day": 3,
     "genre": "Realismo Magico",
+    "city": "Milano",
     "protagonist": {
       "name": "Marco",
       "age": 27,
@@ -131,12 +135,12 @@ Questo è l'esatto oggetto monolitico generato dal *Daily Merger* sul backend (o
     }
   },
   "story_state_memory": {
-    "previous_chapter_summary": "Nel Giorno 2, Marco ha attraversato la città sotto una pioggia sottile, fermandosi al Giardino delle Statue Mute dove un gabbiano gli ha sottratto il pranzo durante un incontro carico di non detti.",
+    "previous_chapter_summary": "Nel Giorno 2, Marco ha attraversato la città sotto una pioggia sottile, fermandosi al Parco Sempione dove un gabbiano gli ha sottratto il pranzo durante un incontro carico di non detti.",
     "last_chapter_ending_state": "AT_HOME_RESTING",
     "established_locations": {
-      "loc_hash_01": "Il Rifugio delle Spezie (Casa)",
-      "loc_hash_02": "Il Giardino delle Statue Mute (Parco cittadino)",
-      "loc_hash_03": "La Fornace Grigia (Ufficio)"
+      "loc_home": "casa",
+      "loc_park_parco_sempione": "Parco Sempione",
+      "loc_work_via_dante": "il lavoro in via Dante"
     },
     "recurring_motifs": [
       "Il gabbiano ladro come presagio di imprevisti",
@@ -164,8 +168,10 @@ Questo è l'esatto oggetto monolitico generato dal *Daily Merger* sul backend (o
       {
         "slot_origin": "SLOT_2_MORNING",
         "time_window": "08:30 - 12:30",
-        "location_id": "loc_hash_03",
-        "location_alias": "La Fornace Grigia (Ufficio)",
+        "location_id": "loc_work_via_dante",
+        "location_alias": "il lavoro in via Dante",
+        "location_at": "al lavoro, in via Dante",
+        "location_area": "Cordusio, Milano",
         "weather": "Cielo terso, vento freddo",
         "biometric_vibe": "Concentrazione statica, lieve tensione costante (HR medio 82 bpm, Stress moderato)",
         "user_notes": []
@@ -173,8 +179,10 @@ Questo è l'esatto oggetto monolitico generato dal *Daily Merger* sul backend (o
       {
         "slot_origin": "SLOT_3_AFTERNOON",
         "time_window": "13:15 - 14:30",
-        "location_id": "loc_hash_02",
-        "location_alias": "Il Giardino delle Statue Mute (Parco cittadino)",
+        "location_id": "loc_park_parco_sempione",
+        "location_alias": "Parco Sempione",
+        "location_at": "al Parco Sempione",
+        "location_area": "Sempione, Milano",
         "weather": "Nuvole basse in rapido movimento",
         "biometric_vibe": "Passo rapido seguito da sosta inquieta (HR 98 bpm)",
         "user_notes": [
@@ -187,8 +195,10 @@ Questo è l'esatto oggetto monolitico generato dal *Daily Merger* sul backend (o
       {
         "slot_origin": "SLOT_4_EVENING",
         "time_window": "19:30 - 23:59",
-        "location_id": "loc_hash_04_new",
-        "location_alias": "Luogo sconosciuto nella zona Est della città",
+        "location_id": "loc_unknown_via_pacini",
+        "location_alias": "via Pacini",
+        "location_at": "in via Pacini",
+        "location_area": "Città Studi, Milano",
         "weather": "Pioggia battente",
         "biometric_vibe": "Picco improvviso di adrenalina e tachicardia da fermo alle 21:15 (HR 128 bpm, SpO2 98%)",
         "user_notes": [
@@ -197,6 +207,19 @@ Questo è l'esatto oggetto monolitico generato dal *Daily Merger* sul backend (o
             "text": "Ho bruciato il risotto proprio mentre cercavo di fare colpo."
           }
         ]
+      }
+    ],
+    "calendar_events": [
+      {
+        "time_window": "21:00 - 23:00",
+        "title": "Cena da Chiara",
+        "kind": "social",
+        "all_day": false,
+        "recurring": false,
+        "presence": "AWAY",
+        "location_id": "loc_unknown_via_pacini",
+        "location_alias": "via Pacini",
+        "location_at": "in via Pacini"
       }
     ],
     "midnight_cutoff_status": "OUTSIDE_HIGH_ACTIVITY"
@@ -213,7 +236,7 @@ Sei un biografo invisibile e uno scrittore d'autore. Il tuo compito è scrivere 
 1. DIVIETO TECNOLOGICO ASSOLUTO: Non usare MAI parole come smartphone, telefono, cellulare, app, WhatsApp, Instagram, social, GPS, notifiche, sveglia digitale o smartwatch. Trasfigura sempre questi concetti usando le metafore fornite in `screen_behavior_summary` e `wake_up_event`, adattandole al genere {{genre}}.
 2. VOCE E LENTE DEL PROTAGONISTA: Il protagonista si chiama {{protagonist.name}} ({{protagonist.age}} anni). Filtra ogni descrizione sensoriale, metafora e riflessione attraverso il suo dominio d'interesse primario ({{protagonist.metaphor_domain}}) e il suo archetipo ({{protagonist.archetype}}). Il suo modo di reagire agli imprevisti è {{protagonist.emotional_reactivity}}, con un focus {{protagonist.narrative_focus}} e un ritmo di scrittura {{protagonist.pacing}}.
 3. INFALLIBILITÀ POETICA (ACCETTA L'ERRORE): Tratta ogni dato biometrico presente in `biometric_vibe` come una verità emotiva e drammatica assoluta. Se il battito cardiaco è a 128 bpm mentre il protagonista è fermo, deve esserci un reale turbamento, suspense o vertigine emotiva nella scena.
-4. CONTINUITÀ E TOPONOMASTICA: Riprendi il filo narrativo da `previous_chapter_summary` e rispetta lo stato finale della notte precedente (`last_chapter_ending_state`). Chiama i luoghi noti usando ESCLUSIVAMENTE i nomi letterari salvati in `established_locations`. Se compare un luogo nuovo (`loc_hash_..._new`), battezzalo con un nome evocativo coerente col genere {{genre}} e restituiscilo nell'output di stato.
+4. CONTINUITÀ E TOPONOMASTICA: Riprendi il filo narrativo da `previous_chapter_summary` e rispetta lo stato finale della notte precedente (`last_chapter_ending_state`). Chiama i luoghi con i loro nomi veri (`location_alias`, `location_at`, `location_area`) e nomina la città come la nominerebbe chi ci vive. Mai vie, locali o nomi letterari inventati: la mappa `established_locations` la tiene il codice, il modello non la modifica.
 5. GESTIONE GIORNATA VUOTA: Se `is_empty_day` è `true`, non inventare viaggi o eventi d'azione. Scrivi un capitolo denso, psicologico e introspettivo in cui il protagonista, chiuso nel suo spazio, rielabora `unresolved_tensions` e `recurring_motifs` dei giorni precedenti.
 6. CHIUSURA A MEZZANOTTE: Se `midnight_cutoff_status` è `OUTSIDE_HIGH_ACTIVITY`, la giornata si è interrotta nel mezzo dell'azione alle 23:59. Chiudi il capitolo in medias res su un cliffhanger carico di attesa.
 
@@ -259,10 +282,10 @@ Il simulatore condivide lo **stesso identico modulo di Merge e generazione AI** 
 ### Sprint 0 — Simulatore Localhost, Daily Merger e Prompt Tuning (Settimana 1)
 * Creazione dello script **Daily Merger** (Node.js o Python) che prende fino a 4 oggetti `SlotBatch` e li fonde nell'unico `DailyUnifiedPayload.json`.
 * Sviluppo della dashboard web in `localhost` per simulare i 4 slot o iniettare il JSON unico, visualizzando i capitoli generati e l'evoluzione di `StoryState.json`.
-* Test di generazione completa su cicli da $3$ e $7$ giorni nei tre generi letterari principali.
+* Test di generazione completa su cicli da $3$ e $7$ giorni nel genere unico (Realismo Magico).
 
 ### Sprint 1 — App Mobile: Onboarding, UI e Taccuino Attivo (Settimana 2-3)
-* Sviluppo del flusso di Onboarding in Flutter/React Native (Anagrafica, selettore $3\text{--}7$ giorni, genere e questionario a $5$ domande).
+* Sviluppo del flusso di Onboarding in Flutter/React Native (Anagrafica, selettore $3\text{--}7$ giorni e questionario a $5$ domande).
 * Creazione della **Home / Taccuino Attivo**: campo di testo sempre accessibile per gli appunti giornalieri (salvati in SQLite locale con il riferimento allo Slot orario corrente) e pulsante *"Concludi Giornata"*.
 * Sviluppo della vista **Taccuino del Narratore** con la logica dei *Capitoli Sigillati* (scelta tra lettura immediata o conservazione per il libro finale).
 

@@ -1,8 +1,9 @@
 import { SLOT_DEFS } from "./meta.js";
 import { HttpError } from "./errors.js";
+import { agendaOfDay, normalizeCalendar } from "./calendar.js";
+import { cityOfDay, placeOf, simulatedCity, simulatedGeo } from "./geo.js";
 import {
   biometricVibe,
-  resolveLocation,
   screenBehavior,
   slotWindow,
   wakeTranslation,
@@ -26,6 +27,7 @@ export function emptySlot(id) {
     places: [],
     notes: [],
     notes_text: "",
+    calendar_events: [],
   };
 }
 
@@ -61,6 +63,7 @@ function normalizeSlot(raw) {
     wake_time: normalizeClock(raw.wake_time),
     places: Array.isArray(raw.places) ? raw.places.slice(0, 8).map(normalizePlace).filter(Boolean) : [],
     notes,
+    calendar_events: normalizeCalendar(raw.calendar_events),
   };
 }
 
@@ -82,7 +85,22 @@ function normalizePlace(raw) {
     peak_while_still: Boolean(raw.peak_while_still),
     spo2: raw.spo2 === "" || raw.spo2 == null ? null : clamp(raw.spo2, 70, 100),
     stress: STRESS.has(raw.stress) ? raw.stress : "low",
+    geo: normalizeGeo(raw.geo),
   };
+}
+
+// Esito del reverse geocoding del telefono. Solo nomi pubblici di luogo:
+// città, quartiere, via (senza numero civico), nome del posto.
+function normalizeGeo(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const street = cleanText(raw.street, 80).replace(/[,\s]+\d+[a-z]?$/i, "");
+  const geo = {
+    city: cleanText(raw.city, 60),
+    district: cleanText(raw.district, 60),
+    street,
+    poi: cleanText(raw.poi, 80),
+  };
+  return geo.city || geo.street || geo.poi ? geo : null;
 }
 
 function normalizeNotes(raw) {
@@ -113,10 +131,20 @@ export function parseNotes(text) {
 }
 
 export function mergeDay({ book, day, date, slots }) {
-  const genre = book.book_config.genre;
   const protagonist = book.book_config.protagonist;
   const storyState = book.story_state;
   const included = normalizeSlots(slots);
+  // Con dati veri ogni tappa porta il suo geo (reverse geocoding del GPS) e la
+  // città si legge da lì. In locale il GPS è simulato: città e luoghi vengono
+  // dallo stradario, sempre uguali per lo stesso libro.
+  const seed = book.id || "story";
+  const homeCity = simulatedCity(seed);
+  const geos = [];
+  const geoOf = (place) => {
+    const geo = place.geo || simulatedGeo(place, { city: homeCity, seed });
+    geos.push(geo);
+    return geo;
+  };
 
   const wake = included.map((slot) => slot.wake_time).find(Boolean) || "";
   const scenes = [];
@@ -142,7 +170,7 @@ export function mergeDay({ book, day, date, slots }) {
         ];
 
     const built = places.map((place) => {
-      const location = resolveLocation(place, storyState, genre, protagonist.metaphor_domain);
+      const location = placeOf(place, geoOf(place));
       const start = place.start || fallbackStart;
       const end = place.end || fallbackEnd;
       return {
@@ -151,6 +179,9 @@ export function mergeDay({ book, day, date, slots }) {
         start,
         location_id: location.location_id,
         location_alias: location.location_alias,
+        location_at: location.location_at,
+        location_area: location.location_area,
+        ...(location.location_also ? { location_also: location.location_also } : {}),
         weather: slot.weather,
         biometric_vibe: biometricVibe(place),
         user_notes: [],
@@ -175,6 +206,9 @@ export function mergeDay({ book, day, date, slots }) {
   scenes.sort((a, b) => a.time_window.localeCompare(b.time_window));
 
   const hasNotes = scenes.some((scene) => scene.user_notes.length > 0);
+  const agenda = agendaOfDay(included, scenes);
+  // Un impegno che non si ripete è materiale della giornata; la routine no.
+  const hasAgenda = agenda.some((event) => !event.recurring);
   const leftHome = scenes.some((scene) => scene.away);
   const last = scenes[scenes.length - 1];
   let midnight = "AT_HOME_RESTING";
@@ -186,6 +220,9 @@ export function mergeDay({ book, day, date, slots }) {
     time_window: scene.time_window,
     location_id: scene.location_id,
     location_alias: scene.location_alias,
+    location_at: scene.location_at,
+    location_area: scene.location_area,
+    ...(scene.location_also ? { location_also: scene.location_also } : {}),
     weather: scene.weather,
     biometric_vibe: scene.biometric_vibe,
     user_notes: scene.user_notes,
@@ -195,7 +232,8 @@ export function mergeDay({ book, day, date, slots }) {
     book_config: {
       total_days: book.book_config.total_days,
       current_day: day,
-      genre,
+      genre: book.book_config.genre,
+      city: cityOfDay(geos) || homeCity,
       protagonist: {
         name: protagonist.name,
         age: protagonist.age,
@@ -211,14 +249,15 @@ export function mergeDay({ book, day, date, slots }) {
     today_unified_telemetry: {
       date: date || book.started_on,
       slots_merged: included.map((slot) => slot.id),
-      is_empty_day: !leftHome && !hasNotes,
+      is_empty_day: !leftHome && !hasNotes && !hasAgenda,
       wake_up_event: {
         time: wake || null,
-        semantic_translation: wakeTranslation(genre, wake),
+        semantic_translation: wakeTranslation(wake),
       },
       weather_daily_arc: weatherArc(included),
-      screen_behavior_summary: screenBehavior(genre, included, protagonist.gender),
+      screen_behavior_summary: screenBehavior(included, protagonist.gender),
       unified_scenes: publicScenes,
+      calendar_events: agenda,
       midnight_cutoff_status: midnight,
     },
   };

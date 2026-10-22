@@ -12,23 +12,24 @@ function realDay({ day = 2, peak = false, ending = "AT_HOME_RESTING", nightAway 
   payload.book_config.current_day = day;
   payload.story_state_memory.last_chapter_ending_state = ending;
   payload.story_state_memory.established_locations = {
-    loc_home: "La Casa delle Spezie",
-    loc_work_new: "Il Lavoro delle Ore Fisse",
+    loc_home: "casa",
+    loc_work_via_dante: "il lavoro in via Dante",
   };
+  // Dal giorno 2 casa e lavoro sono già comparsi nel libro: sono la vita di sempre.
+  payload.story_state_memory.seen_locations = ["loc_home", "loc_work_via_dante"];
   payload.today_unified_telemetry.wake_up_event = { time: "07:05" };
   payload.today_unified_telemetry.midnight_cutoff_status = "AT_HOME_RESTING";
   payload.today_unified_telemetry.unified_scenes = [
     nightAway
-      ? { time_window: "00:20 - 05:40", location_id: "loc_work_new", location_alias: "Il Lavoro delle Ore Fisse", biometric_vibe: "Corpo fermo, stress moderato", user_notes: [] }
-      : { time_window: "00:12 - 05:30", location_id: "loc_home", location_alias: "La Casa delle Spezie", biometric_vibe: "Corpo fermo, ritmo medio 55 bpm", user_notes: [] },
+      ? { time_window: "00:20 - 05:40", location_id: "loc_work_via_dante", location_alias: "il lavoro in via Dante", location_at: "al lavoro, in via Dante", location_area: "Cordusio, Milano", biometric_vibe: "Corpo fermo, stress moderato", user_notes: [] }
+      : { time_window: "00:12 - 05:30", location_id: "loc_home", location_alias: "casa", location_at: "a casa, all'Isola", location_area: "Isola, Milano", biometric_vibe: "Corpo fermo, ritmo medio 55 bpm", user_notes: [] },
     {
       time_window: "08:50 - 17:40",
-      location_id: "loc_work_new",
-      location_alias: "Il Lavoro delle Ore Fisse",
+      location_id: "loc_work_via_dante", location_alias: "il lavoro in via Dante", location_at: "al lavoro, in via Dante", location_area: "Cordusio, Milano",
       biometric_vibe: peak ? "Corpo fermo, picco improvviso di tachicardia da fermo alle 15:22 (HR 143 bpm)" : "Corpo fermo",
       user_notes: [],
     },
-    { time_window: "19:15 - 23:20", location_id: "loc_home", location_alias: "La Casa delle Spezie", biometric_vibe: "Corpo fermo", user_notes: [] },
+    { time_window: "19:15 - 23:20", location_id: "loc_home", location_alias: "casa", location_at: "a casa, all'Isola", location_area: "Isola, Milano", biometric_vibe: "Corpo fermo", user_notes: [] },
   ];
   return payload;
 }
@@ -42,13 +43,13 @@ test("una notte in casa a corpo fermo è sonno: niente scene notturne inventate"
 
 test("una notte fuori casa è la prima scena del capitolo", () => {
   const payload = realDay({ nightAway: true });
-  assert.match(nightOf(payload), /^Notte: fuori casa, al Lavoro delle Ore Fisse/);
+  assert.match(nightOf(payload), /^Notte: fuori casa, al lavoro, in via Dante/);
   assert.ok(dramaticEvents(payload).some((event) => /^NOTTE FUORI CASA/.test(event)));
 });
 
 test("dopo un cliffhanger la notte è ripresa, poi sonno", () => {
   const payload = realDay({ ending: "OUTSIDE_AWAY" });
-  payload.story_state_memory.last_scene = { location_id: "loc_work_new", place: "Il Lavoro delle Ore Fisse", when: "fino a tardi" };
+  payload.story_state_memory.last_scene = { location_id: "loc_work_via_dante", place: "il lavoro in via Dante", at: "al lavoro, in via Dante", when: "fino a tardi" };
   assert.match(nightOf(payload), /^Notte: dopo il ritorno, sonno in casa/);
   assert.match(materialBlock(payload), /Oggi si riparte da lì/);
 });
@@ -56,8 +57,6 @@ test("dopo un cliffhanger la notte è ripresa, poi sonno", () => {
 test("il primo giorno nessun luogo è «mai visto»: è la vita di sempre", () => {
   const payload = realDay({ day: 1 });
   payload.story_state_memory = {};
-  payload.today_unified_telemetry.unified_scenes[1].location_alias =
-    "Luogo sconosciuto (luogo di fatica quotidiana, orari fissi e stanze chiuse)";
   assert.ok(dramaticEvents(payload).every((event) => !/^LUOGO NUOVO/.test(event)));
   assert.equal(threadSeed(payload), "");
   assert.match(materialBlock(payload), /mai «per la prima volta»/);
@@ -66,13 +65,13 @@ test("il primo giorno nessun luogo è «mai visto»: è la vita di sempre", () =
 test("un picco che torna nello stesso luogo diventa ricorrenza", () => {
   const first = realDay({ day: 4, peak: true });
   const logged = strongEventsOf(first);
-  assert.deepEqual(logged, [{ day: 4, kind: "peak_at_rest", location_id: "loc_work_new" }]);
+  assert.deepEqual(logged, [{ day: 4, kind: "peak_at_rest", location_id: "loc_work_via_dante" }]);
   assert.ok(dramaticEvents(first).some((event) => /^PICCO A CORPO FERMO/.test(event)));
 
   const second = realDay({ day: 5, peak: true });
   second.story_state_memory.event_log = logged;
   const events = dramaticEvents(second);
-  assert.match(events[0], /^RICORRENZA — Il Lavoro delle Ore Fisse/);
+  assert.match(events[0], /^RICORRENZA — il lavoro in via Dante/);
   assert.match(events[0], /già il giorno 4/);
   assert.doesNotMatch(threadSeed(second), /tornerà/i);
 });
@@ -122,15 +121,16 @@ test("le tensioni restituite come oggetti non diventano «[object Object]»", ()
   assert.equal(kept.event_log.length, 1);
 });
 
-test("il realismo magico chiede un prodigio; gli altri generi no", () => {
+test("ogni capitolo chiede un prodigio, anche nei libri salvati con un altro genere", () => {
   const { system } = buildPlanPrompt(realDay());
   assert.match(system, /Prodigio \(obbligatorio\)/);
   assert.match(system, /"prodigio"/);
   assert.match(system, /figura di sfondo senza nome/);
   assert.match(system, /Mai chiedere se tornerà in un luogo di routine/);
-  const noir = realDay();
-  noir.book_config.genre = "Noir Urbano";
-  assert.doesNotMatch(buildPlanPrompt(noir).system, /Prodigio/);
+  const old = realDay();
+  old.book_config.genre = "Noir / Hardboiled";
+  assert.match(buildPlanPrompt(old).system, /Prodigio \(obbligatorio\)/);
+  assert.doesNotMatch(buildPlanPrompt(old).system, /Noir/);
   const plan = normalizePlan(
     { desiderio: "uscire prima", prodigio: "la porta ricorda il suo passo", atto_2: { scene: [{ luogo: "Lavoro", presenza: "un collega senza nome" }] }, atto_3: { domanda_finale: "e se restasse?" } },
     realDay()
@@ -149,12 +149,11 @@ test("la quarta non ricopia l'incipit e non parla da copione", () => {
   assert.equal(sharedRun("Un uomo cammina sotto il vento.", [book.days[0].chapter.chapter_text]), "");
 });
 
-test("un luogo già frequentato non torna «nuovo» solo perché il battesimo è stato rifiutato", () => {
+test("un luogo già frequentato non torna «nuovo»", () => {
   const payload = realDay({ day: 2 });
-  payload.today_unified_telemetry.unified_scenes[1].location_alias =
-    "Luogo sconosciuto (luogo di fatica quotidiana, orari fissi e stanze chiuse)";
-  assert.ok(dramaticEvents(payload).some((event) => /^LUOGO NUOVO NEL LIBRO/.test(event)));
-  payload.story_state_memory.seen_locations = ["loc_home", "loc_work_new"];
+  payload.story_state_memory.seen_locations = ["loc_home"];
+  assert.ok(dramaticEvents(payload).some((event) => /^LUOGO NUOVO NEL LIBRO — il lavoro in via Dante \(Cordusio, Milano\)/.test(event)));
+  payload.story_state_memory.seen_locations = ["loc_home", "loc_work_via_dante"];
   assert.ok(dramaticEvents(payload).every((event) => !/^LUOGO NUOVO NEL LIBRO/.test(event)));
 });
 
@@ -173,25 +172,17 @@ test("si sostituisce solo l'ultima frase del capitolo", async () => {
   assert.equal(replaceLastSentence("Uno. Due.\n\nTre resta? Quattro.", "Cinque?"), "Uno. Due.\n\nTre resta? Cinque?");
 });
 
-test("i semi del filo non contengono la nota «un luogo ancora senza nome»", () => {
+test("i semi del filo dicono il luogo vero, con la sua preposizione", () => {
   const payload = realDay({ day: 2, nightAway: true });
-  payload.story_state_memory.established_locations = { loc_home: "La Casa delle Spezie" };
-  payload.today_unified_telemetry.unified_scenes[0].location_alias =
-    "Luogo sconosciuto (luogo di fatica quotidiana, orari fissi e stanze chiuse)";
-  // Luogo nuovo: il seme dice la funzione, non la descrizione provvisoria.
-  assert.match(threadSeed(payload), /^Che cosa è andato a cercare Marco al lavoro, fuori dalle sue strade\?$/);
-  // Luogo già frequentato ma senza nome: vince la notte fuori, sempre senza note di regia.
-  payload.story_state_memory.seen_locations = ["loc_home", "loc_work_new"];
-  const seed = threadSeed(payload);
-  assert.doesNotMatch(seed, /senza nome|fatica quotidiana/);
-  assert.match(seed, /sveglio al lavoro/);
+  payload.story_state_memory.seen_locations = ["loc_home"];
+  // Luogo nuovo: il seme lo nomina come lo si dice.
+  assert.match(threadSeed(payload), /^Che cosa è andato a cercare Marco al lavoro, in via Dante, fuori dalle sue strade\?$/);
+  // Luogo già frequentato: vince la notte fuori.
+  payload.story_state_memory.seen_locations = ["loc_home", "loc_work_via_dante"];
+  assert.match(threadSeed(payload), /sveglio al lavoro, in via Dante mentre la città dorme/);
 });
 
-test("un mestiere senza complemento non si salva; il copione non dichiara gli atti", async () => {
-  const { coerceTradeName } = await import("./transfiguration.js");
-  assert.equal(coerceTradeName("L'Officina Silenziosa", "loc_work_new"), "");
-  assert.equal(coerceTradeName("L'Officina dei Registri Sospesi", "loc_work_new"), "Il Lavoro dei Registri Sospesi");
-  assert.equal(coerceTradeName("Il Giardino del Vento", "loc_park_new"), "Il Giardino del Vento");
+test("il copione non dichiara gli atti", () => {
   const issues = styleIssuesInDraft({ chapter_title: "Il vento", chapter_subtitle: "Ultimo atto prima della pioggia", chapter_text: "Testo." }, { currentDay: 2 });
   assert.ok(issues.some((issue) => issue.includes("parole del mestiere")));
 });
