@@ -4,3 +4,4 @@ https://mixkit.co/license/#sfxFree
 rain.mp3 — Mixkit, «Light rain looping»
 mark.mp3 — Mixkit, «Short pencil writing»
 page.mp3 — Mixkit, «Page turn single»
+type.mp3 — Mixkit, «Hard typewriter hit»

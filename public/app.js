@@ -244,6 +244,8 @@ let markLead = null;
 let markTail = null;
 let pageLead = null;
 let pageTail = null;
+let typeNodes = [];
+let typeIndex = 0;
 
 function soundEnabled() {
   try {
@@ -351,9 +353,52 @@ function playPageTurn() {
   ensurePage();
   const node = !pageLead.paused && pageTail.paused ? pageTail : pageLead;
   cutMark(node);
-  node.volume = 0.12;
+  node.volume = 0.03;
   const start = node.play();
   if (start?.catch) start.catch(() => {});
+}
+
+function makeTypeNode() {
+  const node = new Audio("/audio/type.mp3");
+  node.preload = "auto";
+  node.playsInline = true;
+  return node;
+}
+
+function ensureType() {
+  if (typeNodes.length) return;
+  typeNodes = [makeTypeNode(), makeTypeNode(), makeTypeNode()];
+  ambienceHost().append(...typeNodes);
+}
+
+function playType() {
+  if (isStudioWindow() || !soundEnabled()) return;
+  ensureType();
+  const node = typeNodes[typeIndex % typeNodes.length];
+  typeIndex += 1;
+  cutMark(node);
+  node.volume = 0.01;
+  try {
+    node.currentTime = 0.03;
+  } catch {
+    /* ignore */
+  }
+  const start = node.play();
+  if (start?.catch) start.catch(() => {});
+  node._cut = window.setTimeout(() => cutMark(node), 150);
+}
+
+function shouldTypeSound(event) {
+  const el = event.target;
+  if (!(el instanceof HTMLInputElement) && !(el instanceof HTMLTextAreaElement)) return false;
+  if (el instanceof HTMLInputElement) {
+    const kind = (el.type || "text").toLowerCase();
+    if (["password", "range", "checkbox", "radio", "date", "time", "hidden", "file", "color"].includes(kind)) {
+      return false;
+    }
+  }
+  const inputType = event.inputType || "insertText";
+  return /^(insertText|insertCompositionText|insertLineBreak|deleteContentBackward|deleteContentForward)$/.test(inputType);
 }
 
 function markFromClick(event) {
@@ -389,6 +434,7 @@ function stopAmbience() {
   cutMark(markTail);
   cutMark(pageLead);
   cutMark(pageTail);
+  typeNodes.forEach(cutMark);
 }
 
 function unlockAmbience() {
@@ -2204,6 +2250,9 @@ function bind() {
       return;
     }
     onClick(event).catch((error) => setBanner("error", error.message));
+  });
+  document.addEventListener("input", (event) => {
+    if (shouldTypeSound(event)) playType();
   });
   document.addEventListener("input", onField);
   window.addEventListener("resize", () => placeDaysOutput());
