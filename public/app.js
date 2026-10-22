@@ -843,24 +843,21 @@ function renderVoce() {
           <p class="voce-kicker">I</p>
           <h3 class="voce-heading" id="voce-lente-title">La lente letteraria</h3>
           <p class="voce-lead">Una sola. Fissa il clima, il lessico, ciò che la prosa può vedere.</p>
-          <div class="genre-row">
-            ${state.meta.genres
-              .map(
-                (genre) =>
-                  `<button type="button" class="choice ${form.genre === genre.id ? "is-on" : ""}" data-genre="${esc(genre.id)}" aria-pressed="${form.genre === genre.id}"><strong>${esc(genre.short)}</strong><small>${esc(genre.blurb)}</small></button>`
-              )
-              .join("")}
+          <div class="genre-row pick-list" role="group" aria-label="Lente letteraria">
+            ${state.meta.genres.map((genre) => renderPick(`data-genre="${esc(genre.id)}" data-lens="${lensOf(genre.id)}"`, `${esc(genre.short)} — ${esc(genre.blurb)}`, form.genre === genre.id)).join("")}
           </div>
         </section>
         <aside class="voce-aside">
           <p class="voce-kicker">Oppure</p>
           <p class="voce-lead">Parti da un ritratto già pronto. Compila nome, giorni e le domande.</p>
-          <div class="preset-row">
+          <div class="preset-row pick-list" role="group" aria-label="Ritratti pronti">
             ${state.meta.profiles
               .map((profile) => {
+                const on = form.name === profile.name && form.genre === profile.genre;
                 const cut = profile.label.indexOf("—");
                 const gloss = cut >= 0 ? profile.label.slice(cut + 1).trim() : "";
-                return `<button type="button" class="choice" data-profile="${esc(profile.id)}"><strong>${esc(profile.name)}</strong>${gloss ? `<small>${esc(gloss)}</small>` : ""}</button>`;
+                const copy = gloss ? `${esc(profile.name)} — ${esc(gloss)}` : esc(profile.name);
+                return renderPick(`data-profile="${esc(profile.id)}" data-lens="${lensOf(profile.genre)}"`, copy, on);
               })
               .join("")}
           </div>
@@ -879,6 +876,10 @@ function renderVoce() {
         </div>
       </article>
     </section>`;
+}
+
+function renderPick(attrs, copy, on) {
+  return `<button type="button" class="choice pick${on ? " is-on" : ""}" ${attrs} aria-pressed="${on}"><span class="pick-mark" aria-hidden="true"></span><span class="pick-copy">${copy}</span></button>`;
 }
 
 function renderQuestion(question, index = 0) {
