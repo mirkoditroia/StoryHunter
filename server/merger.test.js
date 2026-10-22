@@ -123,10 +123,10 @@ test("una giornata ordinaria non è vuota e rientra", () => {
 test("il questionario produce il profilo di Marco", () => {
   const traits = profileFromAnswers({ q1: "B", q2: "A", q3: "B", q4: "A", q5: "D" });
   assert.equal(traits.metaphor_domain, "Cucina & Materia");
-  assert.equal(traits.emotional_reactivity, "Autoironico / Sarcastico");
-  assert.equal(traits.archetype, "L'Alchimista / Conviviale");
+  assert.equal(traits.emotional_reactivity, "Irritabile / Collerico");
+  assert.equal(traits.archetype, "L'Assopito / Letargico");
   assert.equal(traits.narrative_focus, "Psicologico / Relazionale");
-  assert.equal(traits.pacing, "Sincopato e dinamico");
+  assert.equal(traits.pacing, "Romantico, lirico e sentimentale");
 });
 
 test("il geo del telefono vince sullo stradario: nomi veri, senza numero civico", () => {

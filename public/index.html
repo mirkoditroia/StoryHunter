@@ -3,6 +3,14 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script>
+      (function () {
+        var path = (location.pathname || "/").replace(/\/+$/, "") || "/";
+        if (path === "/studio" || /(?:^|[?&])studio(?:&|=|$)/.test(location.search)) {
+          document.documentElement.classList.add("is-studio");
+        }
+      })();
+    </script>
     <title>Storyhunter — simulatore locale</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -66,7 +74,7 @@
           Un campo vuoto lascia la chiave già salvata.
         </p>
         <p class="quiet">
-          Pioggia, matita, volta pagina e i tasti sono Mixkit, avviati dal primo clic in copertina.
+          Pioggia, matita, volta pagina e i tasti sono Mixkit, avviati dal pulsante in copertina.
         </p>
         <p class="quiet"><a href="/studio" target="_blank" rel="noreferrer">Osservatorio dei dati simulati</a></p>
         <div class="dialog-actions">

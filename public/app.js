@@ -192,6 +192,9 @@ function isStudioWindow() {
   return path === "/studio" || new URLSearchParams(location.search).has("studio");
 }
 
+if (isStudioWindow()) document.documentElement.classList.add("is-studio");
+else document.documentElement.classList.remove("is-studio");
+
 const SOUND_KEY = "storyhunter-suono";
 const SOUND_TRACKS = {
   rain: "/audio/rain.mp3",
@@ -366,7 +369,7 @@ function shouldTypeSound(event) {
 function markFromClick(event) {
   if (event.target.closest("#toggle-sound")) return;
   if (state.view === "cover") {
-    playMark();
+    if (event.target.closest("#cover-start")) playMark();
     return;
   }
   const target = event.target.closest("button, a, [data-age-step], summary, .overture");
@@ -685,8 +688,8 @@ function renderCover() {
     <section class="page cover" id="cover-page">
       <div class="cover-inner">
         <h1>Storyhunter</h1>
-        <p class="kicker">Il biografo invisibile</p>
-        <p class="cover-hint">Clicca ovunque per iniziare</p>
+        <p class="kicker">Il narratore dietro le quinte</p>
+        <button type="button" class="cover-start" id="cover-start">Clicca qui per iniziare</button>
       </div>
     </section>`;
 }
@@ -730,13 +733,12 @@ function renderSoglia() {
     .join("");
   const openNew = state.books.length
     ? `<button type="button" class="pact-open is-quiet" id="new-cycle">Apri un altro taccuino</button>`
-    : `<button type="button" class="pact-open" id="new-cycle">Apri un nuovo taccuino.</button>`;
+    : `<button type="button" class="pact-open" id="new-cycle">Inizia la tua storia</button>`;
   return `
     <section class="page soglia${arriving ? " is-arriving" : ""}">
       <div class="soglia-inner">
-        <p class="eyebrow">Il patto</p>
-        <h1>Ogni giorno un capitolo sigillato.</h1>
-        <p class="pact">La routine diventa prosa. Tu componi la giornata; il narratore la scrive e la chiude. Il romanzo si apre alla fine del ciclo.</p>
+        <h1>Ogni giorno, un capitolo</h1>
+        <p class="pact">La routine diventa prosa. La tua vita diventa un libro.</p>
         ${state.books.length ? `<div class="shelf"><p class="eyebrow">Taccuini aperti</p>${shelf}${openNew}</div>` : openNew}
       </div>
     </section>`;
@@ -749,7 +751,6 @@ function renderAnagrafica() {
       <article class="paper" id="anagrafica-form">
         <p class="eyebrow">Chi sei</p>
         <h2>Il protagonista</h2>
-        <p class="lede">Nome, corpo anagrafico, e quanto deve durare questo romanzo.</p>
         <label>Nome <input name="name" value="${esc(form.name)}" maxlength="40" placeholder="Il nome nel romanzo"></label>
         <div class="grid-2" style="margin-top: 0.9rem">
           <div class="age-field">
@@ -792,29 +793,13 @@ function renderAnagrafica() {
 }
 
 function renderVoce() {
-  const form = state.form;
   const ready = voiceReady();
   return `
     <section class="page">
       <article class="paper" id="voce-form">
         <p class="eyebrow">La voce</p>
-        <h2>Come verrà raccontato</h2>
-        <p class="lede">Un romanzo di ${esc(state.meta.genre.short.toLowerCase())}: ${esc(state.meta.genre.blurb.charAt(0).toLowerCase() + state.meta.genre.blurb.slice(1))} Cinque domande decidono come guardarti; se vuoi, parti da un ritratto già scritto.</p>
-        <aside class="voce-aside">
-          <p class="voce-kicker">Un ritratto pronto</p>
-          <p class="voce-lead">Parti da un ritratto già pronto. Compila nome, giorni e le domande.</p>
-          <div class="preset-row pick-list" role="group" aria-label="Ritratti pronti">
-            ${state.meta.profiles
-              .map((profile) => {
-                const on = form.name === profile.name;
-                const cut = profile.label.indexOf("—");
-                const gloss = cut >= 0 ? profile.label.slice(cut + 1).trim() : "";
-                const copy = gloss ? `${esc(profile.name)} — ${esc(gloss)}` : esc(profile.name);
-                return renderPick(`data-profile="${esc(profile.id)}" data-lens="realismo"`, copy, on);
-              })
-              .join("")}
-          </div>
-        </aside>
+        <h2>Il racconto</h2>
+        <p class="lede">Il biografo prenderà ispirazione da: meteo, sveglia, spostamenti, agenda e battito cardiaco. Cinque domande per conoscerti, parti da un ritratto già scritto.</p>
         <section class="voce-block is-questions" aria-labelledby="voce-domande-title">
           <h3 class="voce-heading" id="voce-domande-title">Cinque domande</h3>
           <p class="voce-lead">Non è un test. Ogni risposta dice al narratore come guardarti.</p>
@@ -828,10 +813,6 @@ function renderVoce() {
         </div>
       </article>
     </section>`;
-}
-
-function renderPick(attrs, copy, on) {
-  return `<button type="button" class="choice pick${on ? " is-on" : ""}" ${attrs} aria-pressed="${on}"><span class="pick-mark" aria-hidden="true"></span><span class="pick-copy">${copy}</span></button>`;
 }
 
 function renderQuestion(question, index = 0) {
@@ -868,16 +849,15 @@ function renderConferma() {
   return `
     <section class="page conferma">
       <div class="conferma-inner">
-        <p class="eyebrow">La città</p>
-        <p class="home-alias">La diranno i tuoi passi</p>
+        <p class="home-alias">${esc(form.name)}</p>
         <ul class="echo">
-          <li>${esc(form.name)}, ${esc(form.age)} anni</li>
+          <li>${esc(form.age)} anni</li>
           <li>${form.total_days} giorni</li>
         </ul>
         <ul class="echo">${traits}</ul>
         <div class="page-nav" style="justify-content: center">
           <button type="button" class="ghost" data-back="voce">Indietro</button>
-          <button type="button" class="solid" id="create-book">Apri il taccuino</button>
+          <button type="button" class="solid" id="create-book">Inizia la tua storia</button>
         </div>
       </div>
     </section>`;
@@ -1011,16 +991,6 @@ function scenarioSnapshot() {
   return { id: scenario.id, name: scenario.name, description: scenario.description };
 }
 
-function scenarioBar() {
-  const scenario = scenarioSnapshot();
-  if (!scenario) return "";
-  return `
-    <div class="scenario-bar">
-      <p class="quiet"><strong>${esc(scenario.name)}</strong> — ${esc(scenario.description)}</p>
-      <button type="button" class="ghost" id="next-scenario">Altra combinazione</button>
-    </div>`;
-}
-
 function closedBookMarkup() {
   return `
     <section class="page">
@@ -1042,10 +1012,9 @@ function renderToday() {
   return `
     <section class="page">
       <article class="paper" id="taccuino-attivo">
-        <p class="eyebrow">Taccuino attivo · giorno ${roman(day)} di ${roman(book.book_config.total_days)}</p>
+        <p class="eyebrow">Giorno ${roman(day)} di ${roman(book.book_config.total_days)}</p>
         <h2>Scrivi, se serve.</h2>
-        <p class="lede">Il biografo guarda già il resto da solo: meteo, sveglia, spostamenti, battito e impegni in agenda arrivano da una giornata simulata. Qui restano solo gli appunti. Un rigo per volta; se c'è l'ora, mettila all'inizio.</p>
-        ${scenarioBar()}
+        <p class="lede">Annota gli accadimenti importanti della giornata.</p>
         <label class="taccuino-field">Appunti
           <textarea id="day-notes" spellcheck="true" placeholder="13:40 Una frase, se vuoi.">${esc(state.notesText)}</textarea>
         </label>
@@ -1603,17 +1572,6 @@ async function openBoundBook() {
   if (state.book?.id === book.id) state.book = result.book;
 }
 
-function applyProfile(profile) {
-  state.form = {
-    name: profile.name,
-    age: profile.age,
-    gender: profile.gender,
-    total_days: profile.total_days,
-    answers: { ...profile.answers },
-  };
-  go("voce", "enter-forward");
-}
-
 async function createCycle() {
   const problem = formProblems();
   if (problem) {
@@ -1968,7 +1926,7 @@ async function onClick(event) {
   }
   markFromClick(event);
   if (state.view === "cover") {
-    spillCoverInk(event);
+    if (event.target.closest("#cover-start")) spillCoverInk(event);
     return;
   }
 
@@ -1980,7 +1938,6 @@ async function onClick(event) {
 
   const preset = event.target.closest("[data-preset]");
   const removePlace = event.target.closest("[data-remove-place]");
-  const profile = event.target.closest("[data-profile]");
   const open = event.target.closest("[data-open]");
   const remove = event.target.closest("[data-delete]");
   const gender = event.target.closest("[data-gender]");
@@ -2013,10 +1970,6 @@ async function onClick(event) {
   }
   if (event.target.closest("#clear-google-key")) {
     await clearKey("google");
-    return;
-  }
-  if (profile) {
-    applyProfile(state.meta.profiles.find((item) => item.id === profile.dataset.profile));
     return;
   }
   if (open) {
@@ -2082,13 +2035,6 @@ async function onClick(event) {
   }
   if (preset) {
     await loadPreset(preset.dataset.preset);
-    return;
-  }
-  if (event.target.closest("#next-scenario")) {
-    state.notesText = $("#day-notes")?.value ?? state.notesText;
-    state.scenarioShift = (Number(state.scenarioShift) || 0) + 1;
-    assignScenario(state.notesText);
-    go("today", "replace");
     return;
   }
   if (event.target.closest("#end-day")) {

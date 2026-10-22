@@ -122,7 +122,7 @@ export const QUESTIONS = [
   {
     id: "q1",
     parameter: "metaphor_domain",
-    title: "La lente sensoriale",
+    title: "Visioni sensoriali",
     prompt:
       "Entri in una città sconosciuta per la prima volta. Cosa cattura subito la tua attenzione?",
     options: [
@@ -138,8 +138,8 @@ export const QUESTIONS = [
       },
       {
         id: "C",
-        label: "Il ritmo dei passi, i parchi, l'energia fisica di chi si muove.",
-        value: "Sport & Dinamismo corporeo",
+        label: "Le superfici sotto le dita: muri ruvidi, stoffe, il caldo o il freddo sulla pelle.",
+        value: "Tatto & Contatto",
       },
       {
         id: "D",
@@ -152,13 +152,12 @@ export const QUESTIONS = [
     id: "q2",
     parameter: "emotional_reactivity",
     title: "L'imprevisto",
-    prompt:
-      "Un diluvio improvviso manda all'aria i tuoi piani del pomeriggio. Qual è la tua prima reazione interna?",
+    prompt: "Un imprevisto modifica la tua giornata, qual è la tua prima reazione interna?",
     options: [
       {
         id: "A",
-        label: "Rido della sfortuna: è l'ennesima gag della giornata.",
-        value: "Autoironico / Sarcastico",
+        label: "Mi sale la rabbia: questo imprevisto mi manda in bestia.",
+        value: "Irritabile / Collerico",
       },
       {
         id: "B",
@@ -172,8 +171,8 @@ export const QUESTIONS = [
       },
       {
         id: "D",
-        label: "Lo prendo come un segno del destino e mi chiudo nei miei pensieri.",
-        value: "Malinconico / Riflessivo",
+        label: "Mi chiudo nei miei pensieri.",
+        value: "Introverso / Solitario",
       },
     ],
   },
@@ -181,8 +180,7 @@ export const QUESTIONS = [
     id: "q3",
     parameter: "archetype",
     title: "Il rifugio",
-    prompt:
-      "Hai tre ore libere senza obblighi. Come ricarichi davvero la mente?",
+    prompt: "Hai 3 ore libere, come ricarichi davvero la mente?",
     options: [
       {
         id: "A",
@@ -191,8 +189,8 @@ export const QUESTIONS = [
       },
       {
         id: "B",
-        label: "Mettendo le mani in pasta: cucinare qualcosa di complesso o scoprire un locale.",
-        value: "L'Alchimista / Conviviale",
+        label: "Nel riposo: dormire, stare disteso, lasciare che il tempo passi senza fare nulla.",
+        value: "L'Assopito / Letargico",
       },
       {
         id: "C",
@@ -201,8 +199,8 @@ export const QUESTIONS = [
       },
       {
         id: "D",
-        label: "Esplorando mondi: lettura, giochi di strategia o pura contemplazione.",
-        value: "Il Pensatore / Stratega",
+        label: "Con amici e familiari: una chiamata, un pranzo, il tempo passato insieme.",
+        value: "Il Nido / Congiunto",
       },
     ],
   },
@@ -239,28 +237,27 @@ export const QUESTIONS = [
     id: "q5",
     parameter: "pacing",
     title: "Il ruolo nel mondo",
-    prompt:
-      "Se la tua settimana fosse un film, che tipo di inquadratura ti rappresenterebbe meglio?",
+    prompt: "Se la tua vita fosse un film, che tipo di film sarebbe?",
     options: [
       {
         id: "A",
-        label: "Un piano sequenza frenetico in mezzo alla folla.",
-        value: "Incalzante e paratattico",
+        label: "Una commedia.",
+        value: "Commedia, briosa e ironica",
       },
       {
         id: "B",
-        label: "Un dettaglio ravvicinato sulle mani mentre fanno qualcosa.",
-        value: "Descrittivo e minuzioso",
+        label: "Un dramma.",
+        value: "Dramma, grave e disteso",
       },
       {
         id: "C",
-        label: "Un campo lungo e silenzioso visto da una finestra in alto.",
-        value: "Lento, lirico e contemplativo",
+        label: "Un thriller.",
+        value: "Thriller, teso e incalzante",
       },
       {
         id: "D",
-        label: "Un montaggio alternato pieno di imprevisti e cambi di ritmo.",
-        value: "Sincopato e dinamico",
+        label: "Un film romantico.",
+        value: "Romantico, lirico e sentimentale",
       },
     ],
   },
