@@ -505,6 +505,53 @@ function clearCoverInk() {
   document.querySelectorAll(".ink-blot").forEach((node) => node.remove());
 }
 
+function armInkTrail() {
+  if (isStudioWindow() || prefersReducedMotion()) return;
+  let lastX = null;
+  let lastY = null;
+  const stains = [];
+  const radius = () => {
+    const n = () => (18 + Math.random() * 64).toFixed(0);
+    return `${n()}% ${n()}% ${n()}% ${n()}% / ${n()}% ${n()}% ${n()}% ${n()}%`;
+  };
+  window.addEventListener("pointermove", (event) => {
+    if (event.pointerType === "touch") return;
+    const x = event.clientX;
+    const y = event.clientY;
+    if (lastX != null && (x - lastX) ** 2 + (y - lastY) ** 2 < 18 * 18) return;
+    const turn = lastX == null ? Math.random() * 40 - 20 : Math.atan2(y - lastY, x - lastX) * 180 / Math.PI;
+    lastX = x;
+    lastY = y;
+    const stain = document.createElement("span");
+    stain.className = "ink-stain";
+    stain.setAttribute("aria-hidden", "true");
+    const width = 2.1 + Math.random() * 1.5;
+    stain.style.left = `${x}px`;
+    stain.style.top = `${y}px`;
+    stain.style.width = `${width.toFixed(2)}rem`;
+    stain.style.height = `${(width * (0.55 + Math.random() * 0.7)).toFixed(2)}rem`;
+    stain.style.borderRadius = radius();
+    stain.style.setProperty("--ink-turn", `${(turn + Math.random() * 18 - 9).toFixed(1)}deg`);
+    for (let lobe = 0; lobe < 2; lobe += 1) {
+      const splash = document.createElement("i");
+      splash.style.width = `${(28 + Math.random() * 58).toFixed(0)}%`;
+      splash.style.height = `${(24 + Math.random() * 52).toFixed(0)}%`;
+      splash.style.left = `${(Math.random() * 72).toFixed(0)}%`;
+      splash.style.top = `${(Math.random() * 68).toFixed(0)}%`;
+      splash.style.borderRadius = radius();
+      stain.append(splash);
+    }
+    stain.addEventListener("animationend", () => {
+      stain.remove();
+      const index = stains.indexOf(stain);
+      if (index >= 0) stains.splice(index, 1);
+    }, { once: true });
+    document.body.append(stain);
+    stains.push(stain);
+    while (stains.length > 80) stains.shift()?.remove();
+  });
+}
+
 function spillCoverInk(event) {
   if (state.coverInking) return;
   unlockAmbience();
@@ -715,31 +762,50 @@ function armPactReveal() {
   window.setTimeout(done, 3800);
 }
 
+function sogliaReturn(book) {
+  if (book.complete) {
+    return {
+      title: book.name,
+      pact: "I giorni di questo romanzo sono stati scritti.",
+      label: "Apri il volume",
+    };
+  }
+  if (book.chapters <= 0) {
+    return {
+      title: book.name,
+      pact: "Il taccuino è aperto. Il primo capitolo non è ancora scritto.",
+      label: "Riprendi il taccuino",
+    };
+  }
+  if (book.chapters === 1) {
+    return {
+      title: book.name,
+      pact: "Il primo capitolo è già nel taccuino.",
+      label: "Riprendi il taccuino",
+    };
+  }
+  return {
+    title: book.name,
+    pact: `Il giorno ${roman(book.chapters)} è già scritto. Il taccuino resta aperto.`,
+    label: "Riprendi il taccuino",
+  };
+}
+
 function renderSoglia() {
   const arriving = Boolean(state.pactArrive) && !prefersReducedMotion();
-  const shelf = state.books
-    .map(
-      (book, index) => `
-      <div class="spine" style="--i:${index}">
-        <button type="button" data-open="${esc(book.id)}">
-          <strong>${esc(book.name)}</strong>
-          <small>${book.chapters}/${book.total_days} capitoli${book.complete ? " · completo" : ""}</small>
-        </button>
-        <div class="spine-actions">
-          <button type="button" data-delete="${esc(book.id)}">Elimina</button>
-        </div>
-      </div>`
-    )
-    .join("");
-  const openNew = state.books.length
-    ? `<button type="button" class="pact-open is-quiet" id="new-cycle">Apri un altro taccuino</button>`
+  const book = state.books[0];
+  const back = book ? sogliaReturn(book) : null;
+  const pact = back ? back.pact : "La routine diventa prosa. La tua vita diventa un libro.";
+  const action = back
+    ? `<button type="button" class="pact-open" data-open="${esc(book.id)}">${esc(back.label)}</button>
+       <button type="button" class="soglia-new" id="new-cycle">Inizia la tua nuova storia</button>`
     : `<button type="button" class="pact-open" id="new-cycle">Inizia la tua storia</button>`;
   return `
-    <section class="page soglia${arriving ? " is-arriving" : ""}">
+    <section class="page soglia${back ? " is-return" : ""}${arriving ? " is-arriving" : ""}">
       <div class="soglia-inner">
-        <h1>Ogni giorno, un capitolo</h1>
-        <p class="pact">La routine diventa prosa. La tua vita diventa un libro.</p>
-        ${state.books.length ? `<div class="shelf"><p class="eyebrow">Taccuini aperti</p>${shelf}${openNew}</div>` : openNew}
+        <h1>${back ? esc(back.title) : "Ogni giorno, un capitolo"}</h1>
+        <p class="pact">${pact}</p>
+        ${action}
       </div>
     </section>`;
 }
@@ -2183,6 +2249,7 @@ function bind() {
 
 async function boot() {
   bind();
+  armInkTrail();
   try {
     const [meta, library] = await Promise.all([api("/api/meta"), api("/api/books")]);
     state.meta = meta;
