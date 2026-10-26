@@ -23,7 +23,7 @@ const state = {
   coverInking: false,
 };
 
-const BARE_VIEWS = new Set(["cover", "soglia", "conferma"]);
+const BARE_VIEWS = new Set(["cover", "soglia", "conferma", "scheda"]);
 
 const CUTOFF = {
   AT_HOME_RESTING: "Chiude in casa",
@@ -124,8 +124,67 @@ function setBanner(kind, text) {
 
 function setBusy(text) {
   state.busy = Boolean(text);
-  $("#busy").hidden = !text;
   $("#busy-text").textContent = text || "";
+  $("#busy").hidden = !text;
+}
+
+function inkRadius() {
+  const n = () => (16 + Math.random() * 68).toFixed(0);
+  return `${n()}% ${n()}% ${n()}% ${n()}% / ${n()}% ${n()}% ${n()}% ${n()}%`;
+}
+
+function spawnWaitInk(host) {
+  const stain = document.createElement("span");
+  stain.className = "wait-bloom";
+  stain.setAttribute("aria-hidden", "true");
+  const width = 8.5 + Math.random() * 8.5;
+  let x = 6 + Math.random() * 88;
+  let y = 6 + Math.random() * 88;
+  if ((x - 50) ** 2 + (y - 46) ** 2 < 18 * 18) {
+    x = x < 50 ? 6 + Math.random() * 16 : 78 + Math.random() * 16;
+    y = Math.random() < 0.5 ? 6 + Math.random() * 18 : 72 + Math.random() * 20;
+  }
+  stain.style.left = `${x.toFixed(1)}%`;
+  stain.style.top = `${y.toFixed(1)}%`;
+  stain.style.width = `${width.toFixed(2)}rem`;
+  stain.style.height = `${(width * (0.58 + Math.random() * 0.62)).toFixed(2)}rem`;
+  stain.style.borderRadius = inkRadius();
+  stain.style.setProperty("--ink-turn", `${(Math.random() * 46 - 23).toFixed(1)}deg`);
+  stain.style.animationDuration = `${(2.6 + Math.random() * 0.9).toFixed(2)}s`;
+  for (let lobe = 0; lobe < 3; lobe += 1) {
+    const splash = document.createElement("i");
+    splash.style.width = `${(26 + Math.random() * 42).toFixed(0)}%`;
+    splash.style.height = `${(22 + Math.random() * 40).toFixed(0)}%`;
+    splash.style.left = `${(Math.random() * 68).toFixed(0)}%`;
+    splash.style.top = `${(Math.random() * 64).toFixed(0)}%`;
+    splash.style.borderRadius = inkRadius();
+    stain.append(splash);
+  }
+  stain.addEventListener("animationend", () => stain.remove(), { once: true });
+  host.append(stain);
+  while (host.children.length > 4) host.firstElementChild?.remove();
+}
+
+function watchWaitInk() {
+  const busy = $("#busy");
+  const host = busy.querySelector(".wait-ink");
+  if (!host) return;
+  let timer = 0;
+  const stop = () => {
+    window.clearTimeout(timer);
+    timer = 0;
+    host.replaceChildren();
+  };
+  const tick = () => {
+    if (busy.hidden || prefersReducedMotion()) return;
+    spawnWaitInk(host);
+    timer = window.setTimeout(tick, 640 + Math.random() * 780);
+  };
+  new MutationObserver(() => {
+    stop();
+    const writing = /capitolo|giornata/i.test($("#busy-text").textContent);
+    if (!busy.hidden && writing) tick();
+  }).observe(busy, { attributes: true, attributeFilter: ["hidden"] });
 }
 
 function fillModelSelect() {
@@ -624,6 +683,7 @@ function render() {
   const html = {
     cover: renderCover,
     soglia: renderSoglia,
+    scheda: renderScheda,
     anagrafica: renderAnagrafica,
     voce: renderVoce,
     conferma: renderConferma,
@@ -797,7 +857,8 @@ function renderSoglia() {
   const back = book ? sogliaReturn(book) : null;
   const pact = back ? back.pact : "La routine diventa prosa. La tua vita diventa un libro.";
   const action = back
-    ? `<button type="button" class="pact-open" data-open="${esc(book.id)}">${esc(back.label)}</button>
+    ? `<button type="button" class="soglia-params" id="open-scheda">I parametri</button>
+       <button type="button" class="pact-open" data-open="${esc(book.id)}">${esc(back.label)}</button>
        <button type="button" class="soglia-new" id="new-cycle">Inizia la tua nuova storia</button>`
     : `<button type="button" class="pact-open" id="new-cycle">Inizia la tua storia</button>`;
   return `
@@ -806,6 +867,33 @@ function renderSoglia() {
         <h1>${back ? esc(back.title) : "Ogni giorno, un capitolo"}</h1>
         <p class="pact">${pact}</p>
         ${action}
+      </div>
+    </section>`;
+}
+
+function renderScheda() {
+  const book = state.book;
+  const protagonist = book?.book_config?.protagonist;
+  if (!protagonist) return "";
+  const gender = state.meta.genders.find((item) => item.id === protagonist.gender);
+  const traits = state.meta.questions
+    .map((question) => {
+      const value = protagonist[question.parameter];
+      return `<li><span>${esc(question.title)}</span><strong>${esc(value || "—")}</strong></li>`;
+    })
+    .join("");
+  return `
+    <section class="page scheda">
+      <div class="scheda-inner">
+        <p class="eyebrow">I parametri</p>
+        <h1>${esc(protagonist.name)}</h1>
+        <ul class="scheda-facts">
+          <li>${esc(protagonist.age)} anni</li>
+          <li>${esc(gender ? gender.label : protagonist.gender)}</li>
+          <li>${esc(book.book_config.total_days)} giorni</li>
+        </ul>
+        <ul class="scheda-traits">${traits}</ul>
+        <button type="button" class="pact-open" data-back="soglia">Indietro</button>
       </div>
     </section>`;
 }
@@ -1661,6 +1749,21 @@ async function createCycle() {
   }
 }
 
+async function openScheda() {
+  const summary = state.books[0];
+  if (!summary) return;
+  setBanner("", "");
+  try {
+    if (state.book?.id !== summary.id) {
+      const { book } = await api(`/api/books/${summary.id}`);
+      state.book = book;
+    }
+    go("scheda", "enter-forward");
+  } catch (error) {
+    setBanner("error", error.message);
+  }
+}
+
 async function openBook(id) {
   setBusy("");
   setBanner("", "");
@@ -1742,12 +1845,11 @@ async function loadPreset(id) {
 
 async function concludeDay() {
   if (state.busy) return;
-  applyNotesToSlots(state.notesText);
-  publishOsservatorio();
-  await generate(
-    { source: "slots", date: state.date, slots: slotsForApi() },
-    "Si chiude la giornata. Il narratore sta scrivendo il capitolo."
-  );
+  setBanner("", "");
+  setBusy("Si chiude la giornata. Il narratore sta scrivendo il capitolo.");
+  await new Promise((resolve) => window.setTimeout(resolve, 5200));
+  setBusy("");
+  setBanner("ok", "Prova di attesa. Nessun capitolo è stato scritto.");
 }
 
 async function generate(body, busyText) {
@@ -2046,6 +2148,10 @@ async function onClick(event) {
     await removeBook(remove.dataset.delete);
     return;
   }
+  if (event.target.closest("#open-scheda")) {
+    await openScheda();
+    return;
+  }
   if (event.target.closest("#new-cycle")) {
     state.form = blankForm();
     go("anagrafica", "enter-forward");
@@ -2250,6 +2356,7 @@ function bind() {
 async function boot() {
   bind();
   armInkTrail();
+  watchWaitInk();
   try {
     const [meta, library] = await Promise.all([api("/api/meta"), api("/api/books")]);
     state.meta = meta;
