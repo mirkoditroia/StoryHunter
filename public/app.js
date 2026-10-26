@@ -857,7 +857,7 @@ function renderSoglia() {
   const back = book ? sogliaReturn(book) : null;
   const pact = back ? back.pact : "La routine diventa prosa. La tua vita diventa un libro.";
   const action = back
-    ? `<button type="button" class="soglia-params" id="open-scheda">I parametri</button>
+    ? `<button type="button" class="soglia-params" id="open-scheda"><svg class="soglia-params-mark" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="4.2" r="2.2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M2.9 14.2c.8-3 2.5-4.35 5.1-4.35s4.3 1.35 5.1 4.35" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg><span>I parametri</span></button>
        <button type="button" class="pact-open" data-open="${esc(book.id)}">${esc(back.label)}</button>
        <button type="button" class="soglia-new" id="new-cycle">Inizia la tua nuova storia</button>`
     : `<button type="button" class="pact-open" id="new-cycle">Inizia la tua storia</button>`;
@@ -1009,7 +1009,7 @@ function renderConferma() {
           <li>${form.total_days} giorni</li>
         </ul>
         <ul class="echo">${traits}</ul>
-        <div class="page-nav" style="justify-content: center">
+        <div class="page-nav">
           <button type="button" class="ghost" data-back="voce">Indietro</button>
           <button type="button" class="solid" id="create-book">Inizia la tua storia</button>
         </div>
@@ -1535,8 +1535,7 @@ function chapterCard(entry) {
   if (chapter.sealed) {
     return `
       <article class="sheet" id="chapter-${entry.day}">
-        <div class="seal">${roman(entry.day)}</div>
-        <h3>Capitolo ${roman(entry.day)}</h3>
+        <h3>Capitolo <span class="seal">${roman(entry.day)}</span></h3>
         <p class="quiet">${esc(entry.date)} · ${chapter.words || "—"} parole · sigillato</p>
         <p>Il foglio è chiuso. Puoi aprirlo adesso, o conservarlo per quando il ciclo sarà intero.</p>
         <div class="actions no-print">
@@ -1684,8 +1683,7 @@ function volumeChapter(entry) {
   if (entry.chapter.sealed) {
     return `
       <section class="volume-leaf">
-        <div class="seal">${roman(entry.day)}</div>
-        <h3>Capitolo ${roman(entry.day)}</h3>
+        <h3>Capitolo <span class="seal">${roman(entry.day)}</span></h3>
         <p>Ancora sigillato.</p>
       </section>`;
   }
@@ -1845,11 +1843,12 @@ async function loadPreset(id) {
 
 async function concludeDay() {
   if (state.busy) return;
-  setBanner("", "");
-  setBusy("Si chiude la giornata. Il narratore sta scrivendo il capitolo.");
-  await new Promise((resolve) => window.setTimeout(resolve, 5200));
-  setBusy("");
-  setBanner("ok", "Prova di attesa. Nessun capitolo è stato scritto.");
+  applyNotesToSlots(state.notesText);
+  publishOsservatorio();
+  await generate(
+    { source: "slots", date: state.date, slots: slotsForApi() },
+    "Si chiude la giornata. Il narratore sta scrivendo il capitolo."
+  );
 }
 
 async function generate(body, busyText) {
