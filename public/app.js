@@ -1535,7 +1535,7 @@ function chapterCard(entry) {
   if (chapter.sealed) {
     return `
       <article class="sheet" id="chapter-${entry.day}">
-        <h3>Capitolo <span class="seal">${roman(entry.day)}</span></h3>
+        <h3 class="chapter-hand">Capitolo ${roman(entry.day)}</h3>
         <p class="quiet">${esc(entry.date)} · ${chapter.words || "—"} parole · sigillato</p>
         <p>Il foglio è chiuso. Puoi aprirlo adesso, o conservarlo per quando il ciclo sarà intero.</p>
         <div class="actions no-print">
@@ -1683,7 +1683,7 @@ function volumeChapter(entry) {
   if (entry.chapter.sealed) {
     return `
       <section class="volume-leaf">
-        <h3>Capitolo <span class="seal">${roman(entry.day)}</span></h3>
+        <h3 class="chapter-hand">Capitolo ${roman(entry.day)}</h3>
         <p>Ancora sigillato.</p>
       </section>`;
   }

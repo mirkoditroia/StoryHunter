@@ -1750,23 +1750,16 @@ details.json-fold summary {
 }
 .sheet .quiet, .book .quiet { color: var(--muted); }
 
-.seal {
-  display: inline-block;
-  width: auto;
-  height: auto;
-  margin: 0 0 0 0.18rem;
-  border: 0;
-  border-radius: 0;
-  background: none;
-  box-shadow: none;
+.chapter-hand {
+  margin: 0.2rem 0 0.55rem;
   color: #8a5f54;
   font-family: "Allura", cursive;
   font-style: normal;
   font-weight: 400;
-  font-size: 2.15em;
-  line-height: 0.7;
+  font-size: 3.35rem;
+  line-height: 1.05;
   letter-spacing: 0;
-  vertical-align: -0.16em;
+  word-spacing: -0.08em;
 }
 
 .prose {
@@ -2135,7 +2128,6 @@ dialog::backdrop { background: rgba(213, 213, 215, 0.55); }
   .stage.is-turning > .page,
   .stage.is-turning-back > .page,
   .pulse,
-  .seal,
   .soglia.is-arriving::before,
   .soglia.is-arriving h1,
   .soglia.is-arriving .pact,
