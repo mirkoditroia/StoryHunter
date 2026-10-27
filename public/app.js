@@ -658,7 +658,7 @@ function crossfadeAmbience(key, vol) {
 
 function go(view, motion = "enter-forward") {
   if (isStudioWindow()) view = "studio";
-  else if (view === "slot" || view === "merge") view = "today";
+  else if (view === "slot" || view === "merge" || view === "notebook") view = cycleComplete() ? "volume" : "today";
   const shouldTurn = !isStudioWindow() && motion !== "enter-cover" && motion !== "none";
   if (view !== "volume") state.premiere = false;
   state.pactArrive = state.view === "cover" && view === "soglia";
@@ -684,92 +684,116 @@ function prefersReducedMotion() {
   return window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
 }
 
-let coverInkGen = 0;
-
 function clearCoverInk() {
-  coverInkGen += 1;
   state.coverInking = false;
-  document.querySelectorAll(".ink-blot").forEach((node) => node.remove());
+}
+
+function watchVisualViewport() {
+  const viewport = window.visualViewport;
+  if (!viewport) return;
+  let frame = 0;
+  const apply = () => {
+    frame = 0;
+    document.documentElement.style.setProperty("--vv-top", `${viewport.offsetTop || 0}px`);
+    document.documentElement.style.setProperty("--vvh", `${Math.round(viewport.height)}px`);
+  };
+  const schedule = () => {
+    if (!frame) frame = window.requestAnimationFrame(apply);
+  };
+  apply();
+  viewport.addEventListener("resize", schedule);
+  viewport.addEventListener("scroll", schedule);
 }
 
 function armInkTrail() {
   if (isStudioWindow() || prefersReducedMotion()) return;
-  let lastX = null;
-  let lastY = null;
-  const stains = [];
-  const radius = () => {
-    const n = () => (18 + Math.random() * 64).toFixed(0);
-    return `${n()}% ${n()}% ${n()}% ${n()}% / ${n()}% ${n()}% ${n()}% ${n()}%`;
+  if (window.matchMedia?.("(pointer: coarse)")?.matches) return;
+  const canvas = document.createElement("canvas");
+  canvas.className = "ink-trail";
+  canvas.setAttribute("aria-hidden", "true");
+  document.body.append(canvas);
+  const ctx = canvas.getContext("2d");
+  let drawing = false;
+  let last = null;
+
+  const resize = () => {
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.floor(window.innerWidth * dpr);
+    canvas.height = Math.floor(window.innerHeight * dpr);
+    canvas.style.width = `${window.innerWidth}px`;
+    canvas.style.height = `${window.innerHeight}px`;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   };
-  window.addEventListener("pointermove", (event) => {
-    if (event.pointerType === "touch") return;
-    const x = event.clientX;
-    const y = event.clientY;
-    if (lastX != null && (x - lastX) ** 2 + (y - lastY) ** 2 < 18 * 18) return;
-    const turn = lastX == null ? Math.random() * 40 - 20 : Math.atan2(y - lastY, x - lastX) * 180 / Math.PI;
-    lastX = x;
-    lastY = y;
-    const stain = document.createElement("span");
-    stain.className = "ink-stain";
-    stain.setAttribute("aria-hidden", "true");
-    const width = 2.1 + Math.random() * 1.5;
-    stain.style.left = `${x}px`;
-    stain.style.top = `${y}px`;
-    stain.style.width = `${width.toFixed(2)}rem`;
-    stain.style.height = `${(width * (0.55 + Math.random() * 0.7)).toFixed(2)}rem`;
-    stain.style.borderRadius = radius();
-    stain.style.setProperty("--ink-turn", `${(turn + Math.random() * 18 - 9).toFixed(1)}deg`);
-    for (let lobe = 0; lobe < 2; lobe += 1) {
-      const splash = document.createElement("i");
-      splash.style.width = `${(28 + Math.random() * 58).toFixed(0)}%`;
-      splash.style.height = `${(24 + Math.random() * 52).toFixed(0)}%`;
-      splash.style.left = `${(Math.random() * 72).toFixed(0)}%`;
-      splash.style.top = `${(Math.random() * 68).toFixed(0)}%`;
-      splash.style.borderRadius = radius();
-      stain.append(splash);
+  resize();
+  window.addEventListener("resize", resize);
+
+  const marks = [];
+  const life = 280;
+  let frame = 0;
+
+  const paint = (now) => {
+    frame = 0;
+    const dpr = window.devicePixelRatio || 1;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+    const alive = marks.filter((mark) => now - mark.t < life);
+    marks.length = 0;
+    marks.push(...alive);
+    ctx.lineCap = "butt";
+    ctx.lineJoin = "miter";
+    for (let i = 1; i < alive.length; i += 1) {
+      const from = alive[i - 1];
+      const to = alive[i];
+      const age = (now - to.t) / life;
+      const alpha = (1 - age) ** 2.4;
+      if (alpha < 0.04) continue;
+      const dx = to.x - from.x;
+      const dy = to.y - from.y;
+      const len = Math.hypot(dx, dy) || 1;
+      const nx = -dy / len;
+      const ny = dx / len;
+      ctx.strokeStyle = `rgba(32, 16, 12, ${alpha})`;
+      ctx.lineWidth = 0.7 + to.grain * 0.9;
+      ctx.beginPath();
+      ctx.moveTo(from.x + nx * from.grain, from.y + ny * from.grain);
+      ctx.lineTo(to.x + nx * to.grain * 0.35, to.y + ny * to.grain * 0.35);
+      ctx.stroke();
     }
-    stain.addEventListener("animationend", () => {
-      stain.remove();
-      const index = stains.indexOf(stain);
-      if (index >= 0) stains.splice(index, 1);
-    }, { once: true });
-    document.body.append(stain);
-    stains.push(stain);
-    while (stains.length > 80) stains.shift()?.remove();
+    if (drawing || marks.length) frame = window.requestAnimationFrame(paint);
+  };
+
+  const wake = () => {
+    if (!frame) frame = window.requestAnimationFrame(paint);
+  };
+
+  window.addEventListener("pointerdown", (event) => {
+    if (event.button != null && event.button !== 0) return;
+    drawing = true;
+    last = { x: event.clientX, y: event.clientY };
+    marks.push({ ...last, t: performance.now(), grain: (Math.random() - 0.5) * 1.8 });
+    wake();
   });
+  window.addEventListener("pointermove", (event) => {
+    if (!drawing || !last) return;
+    const next = { x: event.clientX, y: event.clientY };
+    if ((next.x - last.x) ** 2 + (next.y - last.y) ** 2 < 2.2) return;
+    marks.push({ ...next, t: performance.now(), grain: (Math.random() - 0.5) * 2.1 });
+    last = next;
+    wake();
+  });
+  const stop = () => {
+    drawing = false;
+    last = null;
+  };
+  window.addEventListener("pointerup", stop);
+  window.addEventListener("pointercancel", stop);
 }
 
-function spillCoverInk(event) {
+function spillCoverInk() {
   if (state.coverInking) return;
-  unlockAmbience();
-  if (prefersReducedMotion()) {
-    enterFromCover();
-    return;
-  }
   state.coverInking = true;
-  const gen = ++coverInkGen;
-  const title = document.querySelector(".cover h1");
-  const box = title?.getBoundingClientRect();
-  const x = box ? box.left + box.width / 2 : event.clientX;
-  const y = box ? box.top + box.height / 2 : event.clientY;
-  const blot = document.createElement("span");
-  blot.className = "ink-blot";
-  blot.setAttribute("aria-hidden", "true");
-  blot.style.left = `${x}px`;
-  blot.style.top = `${y}px`;
-  blot.style.setProperty("--ink-turn", `${(Math.random() * 16 - 8).toFixed(1)}deg`);
-  blot.innerHTML = `<i></i><i></i>`;
-  document.body.append(blot);
-  window.setTimeout(() => {
-    if (gen !== coverInkGen) return;
-    blot.classList.add("is-leaving");
-    enterFromCover();
-    window.setTimeout(() => {
-      if (gen !== coverInkGen) return;
-      blot.remove();
-      state.coverInking = false;
-    }, 900);
-  }, 920);
+  unlockAmbience();
+  enterFromCover();
 }
 
 function render() {
@@ -818,6 +842,7 @@ function render() {
     voce: renderVoce,
     conferma: renderConferma,
     today: renderToday,
+    libri: renderLibri,
     studio: renderStudio,
     slot: renderSlotPage,
     merge: renderMergePage,
@@ -914,9 +939,18 @@ function cycleComplete(book = state.book) {
   return Boolean(book && book.book_config.current_day > book.book_config.total_days);
 }
 
+function activeSummary() {
+  return state.books.find((book) => !book.archived) || null;
+}
+
+function archivedStories() {
+  return state.books.filter((book) => book.archived && book.complete);
+}
+
 function storyIsDone() {
-  if (state.book) return cycleComplete(state.book);
-  return Boolean(state.books[0]?.complete);
+  const current = activeSummary();
+  if (!current) return true;
+  return Boolean(current.complete);
 }
 
 function storyNavLinks() {
@@ -924,7 +958,8 @@ function storyNavLinks() {
   const items = [["scheda", "Profilo"]];
   if (done) items.unshift(["soglia", "Inizio"]);
   if (!done) items.push(["today", "Oggi"]);
-  items.push(["notebook", "Capitoli"], ["volume", "Libro"]);
+  items.push(["volume", "Libro"]);
+  if (archivedStories().length) items.push(["libri", "Libri"]);
   if (done) items.push(["new", "Nuova storia"]);
   return items
     .map(([id, label]) => {
@@ -942,7 +977,7 @@ function storyNavLinks() {
 function paintStoryNav() {
   const nav = $("#story-nav");
   if (!nav) return;
-  const views = new Set(["soglia", "scheda", "today", "notebook", "volume", "memory"]);
+  const views = new Set(["soglia", "scheda", "today", "notebook", "volume", "memory", "libri"]);
   const hasStory = state.view === "soglia" ? state.books.length > 0 : Boolean(state.book);
   const show = views.has(state.view) && hasStory && !isStudioWindow();
   nav.hidden = !show;
@@ -951,7 +986,7 @@ function paintStoryNav() {
 }
 
 async function ensureHomeBook() {
-  const summary = state.books[0];
+  const summary = activeSummary();
   if (!summary) return null;
   if (state.book?.id === summary.id) return state.book;
   const { book } = await api(`/api/books/${summary.id}`);
@@ -961,7 +996,7 @@ async function ensureHomeBook() {
 }
 
 async function goHome(motion = "enter-back") {
-  const summary = state.books[0];
+  const summary = activeSummary();
   if (summary && !summary.complete) {
     if (state.book?.id === summary.id) {
       go("today", motion);
@@ -975,7 +1010,8 @@ async function goHome(motion = "enter-back") {
 }
 
 function startNewStory() {
-  if (state.books[0] && !state.books[0].complete) {
+  const current = activeSummary();
+  if (current && !current.complete) {
     goHome("enter-forward");
     return;
   }
@@ -1003,12 +1039,16 @@ async function onStoryNav(dest) {
     await goHome("enter-back");
     return;
   }
+  if (dest === "libri") {
+    go("libri", "enter-forward");
+    return;
+  }
   if (!(await ensureHomeBook())) return;
   go(dest, "enter-forward");
 }
 
 async function enterFromCover() {
-  const summary = state.books[0];
+  const summary = activeSummary();
   if (summary && !summary.complete) {
     await openBook(summary.id);
     return;
@@ -1020,7 +1060,14 @@ function renderCover() {
   return `
     <section class="page cover" id="cover-page">
       <div class="cover-inner">
+        <div class="cover-mark">
+        <svg class="cover-book" viewBox="0 0 168 104" aria-hidden="true">
+          <path d="M84 16C58 8 24 12 12 18L16 86C34 76 60 78 84 90C108 78 134 76 152 86L156 18C144 12 110 8 84 16z" />
+          <path d="M84 16v74" />
+          <path d="M30 34h38M30 44h30M32 62h34M104 34h36M108 44h30M102 62h34" />
+        </svg>
         <h1>Storyhunter</h1>
+        </div>
         <p class="kicker">Il narratore dietro le quinte</p>
         <button type="button" class="cover-start" id="cover-start">Clicca qui per iniziare</button>
       </div>
@@ -1081,7 +1128,7 @@ function sogliaReturn(book) {
 function renderSoglia() {
   const arriving = Boolean(state.pactArrive) && !prefersReducedMotion();
   const profile = state.profile;
-  const book = state.books[0];
+  const book = activeSummary();
   if (!profile) {
     return `
       <section class="page soglia${arriving ? " is-arriving" : ""}">
@@ -1509,7 +1556,6 @@ function renderToday() {
           <textarea id="day-notes" spellcheck="true" placeholder="13:40 Una frase, se vuoi.">${esc(state.notesText)}</textarea>
         </label>
         <div class="page-nav">
-          <button type="button" class="ghost" data-view="notebook">Capitoli sigillati</button>
           <button type="button" class="solid" id="end-day">Concludi Giornata</button>
         </div>
       </article>
@@ -1966,15 +2012,20 @@ function renderVolume() {
       ${
         state.premiere
           ? `<div class="overture">
-              <div class="overture-inner">
-                <p class="kicker">${esc(book.book_config.genre)}</p>
-                <h2 class="overture-title">${esc(closing.book_title)}</h2>
-                <div class="overture-rule" aria-hidden="true"></div>
-                <p class="overture-sub">${esc(closing.subtitle || "")}</p>
-                <p class="epigraph">${esc(closing.epigraph || "")}</p>
-                <p class="overture-name">${esc(book.book_config.protagonist.name)}</p>
-                <p class="overture-hint">Tocca per aprire il libro</p>
+              <div class="open-stage">
+                <div class="open-leaf" aria-hidden="true"></div>
+                <div class="open-cover">
+                  <div class="open-cover-face">
+                    <p class="kicker">${esc(book.book_config.genre)}</p>
+                    <h2 class="overture-title">${esc(closing.book_title)}</h2>
+                    <div class="overture-rule" aria-hidden="true"></div>
+                    <p class="overture-sub">${esc(closing.subtitle || "")}</p>
+                    <p class="epigraph">${esc(closing.epigraph || "")}</p>
+                    <p class="overture-name">${esc(book.book_config.protagonist.name)}</p>
+                  </div>
+                </div>
               </div>
+              <p class="overture-hint">Tocca per aprire il libro</p>
             </div>`
           : ""
       }
@@ -2000,13 +2051,6 @@ function renderVolume() {
 }
 
 function volumeChapter(entry) {
-  if (entry.chapter.sealed) {
-    return `
-      <section class="volume-leaf">
-        <h3 class="chapter-hand">Capitolo ${roman(entry.day)}</h3>
-        <p>Ancora sigillato.</p>
-      </section>`;
-  }
   return `
     <section class="volume-leaf">
       <p class="chapter-index">Capitolo ${roman(entry.day)}</p>
@@ -2020,21 +2064,31 @@ function armPremiere() {
   const root = document.querySelector(".volume-premiere.is-premiering");
   if (!root || root.dataset.armed) return;
   root.dataset.armed = "true";
+  const overture = root.querySelector(".overture");
   let done = false;
+  let opening = false;
   const finish = () => {
     if (done) return;
     done = true;
     state.premiere = false;
     document.body.classList.remove("is-premiere");
-    root.classList.remove("is-premiering");
+    root.classList.remove("is-premiering", "is-opening");
     root.classList.add("is-open");
-    root.querySelector(".overture")?.remove();
+    overture?.remove();
   };
-  root.querySelector(".overture")?.addEventListener("click", () => {
+  const open = () => {
+    if (opening || done) return;
+    opening = true;
+    root.classList.add("is-opening");
+    overture?.classList.add("is-opening");
+    window.setTimeout(finish, prefersReducedMotion() ? 40 : 1880);
+  };
+  overture?.addEventListener("click", () => {
     playMark();
-    finish();
+    if (opening) finish();
+    else open();
   });
-  window.setTimeout(finish, prefersReducedMotion() ? 40 : 5400);
+  window.setTimeout(open, prefersReducedMotion() ? 40 : 980);
 }
 
 async function openBoundBook() {
@@ -2134,8 +2188,30 @@ async function createCycle() {
   }
 }
 
+function renderLibri() {
+  const shelf = archivedStories();
+  return `
+    <section class="page">
+      <article class="paper">
+        <p class="eyebrow">Libri</p>
+        <h2>I volumi conclusi</h2>
+        <p class="lede">Quando ne inizi uno nuovo, il precedente resta qui.</p>
+        ${
+          shelf.length
+            ? `<div class="book-shelf">${shelf
+                .map((book) => {
+                  const title = book.title || `Ciclo di ${book.name}`;
+                  return `<button type="button" class="shelf-book" data-open="${esc(book.id)}"><span>${esc(title)}</span><small>${book.total_days} giorni</small></button>`;
+                })
+                .join("")}</div>`
+            : `<p class="quiet">Ancora nessun libro archiviato.</p>`
+        }
+      </article>
+    </section>`;
+}
+
 async function openScheda() {
-  const summary = state.books[0];
+  const summary = activeSummary();
   if (!summary) return;
   setBanner("", "");
   try {
@@ -2301,12 +2377,52 @@ async function generate(body, busyText) {
     state.book = result.book;
     state.mountedKey = "";
     const done = cycleComplete(result.book);
-    if (done) setBanner("", "");
-    else setBanner("ok", `Capitolo ${roman(result.book.days.at(-1).day)} sigillato.`);
-    go(done ? "volume" : "today", "enter-forward");
+    if (!done) {
+      setBanner("ok", "La giornata è chiusa.");
+      go("today", "enter-forward");
+      return;
+    }
+    setBanner("", "");
   } catch (error) {
     setBanner("error", error.message);
     if (/chiave API/i.test(error.message)) showSettings();
+    return;
+  } finally {
+    setBusy("");
+  }
+  await openTheBook();
+}
+
+async function openTheBook() {
+  if (!state.book) return;
+  if (state.book.closing) {
+    state.premiere = true;
+    go("volume", "enter-forward");
+    return;
+  }
+  if (!state.meta.llm.configured) {
+    setBanner("error", `Manca la chiave API ${engineName()}.`);
+    showSettings();
+    go("volume", "enter-forward");
+    return;
+  }
+  setBusy("Si apre il libro.");
+  try {
+    const result = await api(`/api/books/${state.book.id}/close`, {
+      method: "POST",
+      body: {},
+      signal: typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
+        ? AbortSignal.timeout(120000)
+        : undefined,
+    });
+    state.book = result.book;
+    state.books = (await api("/api/books")).books;
+    state.premiere = true;
+    setBanner("", "");
+    go("volume", "enter-forward");
+  } catch (error) {
+    setBanner("error", error.message);
+    go("volume", "enter-forward");
   } finally {
     setBusy("");
   }
@@ -2661,7 +2777,7 @@ async function onClick(event) {
     return;
   }
   if (back) {
-    if (back.dataset.back === "soglia" && state.books[0] && !state.books[0].complete) {
+    if (back.dataset.back === "soglia" && activeSummary() && !activeSummary().complete) {
       await goHome("enter-back");
       return;
     }
@@ -2737,29 +2853,7 @@ async function onClick(event) {
     return;
   }
   if (event.target.closest("#compose")) {
-    if (!state.meta.llm.configured) {
-      setBanner("error", `Manca la chiave API ${engineName()}.`);
-      showSettings();
-      return;
-    }
-    setBusy("Si apre il libro.");
-    try {
-      const result = await api(`/api/books/${state.book.id}/close`, {
-        method: "POST",
-        body: {},
-        signal: typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
-          ? AbortSignal.timeout(120000)
-          : undefined,
-      });
-      state.book = result.book;
-      state.premiere = true;
-      setBanner("", "");
-      go("volume", "enter-forward");
-    } catch (error) {
-      setBanner("error", error.message);
-    } finally {
-      setBusy("");
-    }
+    await openTheBook();
     return;
   }
   if (event.target.closest("#print")) window.print();
@@ -2777,6 +2871,16 @@ async function mutateBook(path, view) {
 }
 
 function bind() {
+  watchVisualViewport();
+  document.addEventListener("focusin", (event) => {
+    const field = event.target;
+    if (!(field instanceof HTMLElement)) return;
+    if (!field.matches("input, textarea, select")) return;
+    window.setTimeout(() => {
+      const scroller = field.closest("#taccuino-attivo, .page.scheda, dialog");
+      if (scroller) field.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }, 280);
+  });
   document.addEventListener("mousedown", (event) => {
     if (event.target.closest?.("[data-age-step]")) event.preventDefault();
   });

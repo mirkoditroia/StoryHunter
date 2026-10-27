@@ -33,6 +33,7 @@ import {
   listBooks,
   loadBook,
   localISODate,
+  archiveOpenBooks,
   logoutProfile,
   publicProfile,
   saveBook,
@@ -139,10 +140,12 @@ app.post("/api/books", async (req, res, next) => {
   try {
     const profile = await ensureProfile();
     if (profile) {
-      const mine = visibleBooks(await listBooks(), profile.id);
-      if (mine.some((book) => !book.complete)) {
+      const open = visibleBooks(await listBooks(), profile.id).filter((book) => !book.archived);
+      const current = open[0];
+      if (current && !current.complete) {
         throw new HttpError(400, "Il libro in corso non è ancora concluso.");
       }
+      if (open.length) await archiveOpenBooks(profile.id);
     }
     const source = profile
       ? {

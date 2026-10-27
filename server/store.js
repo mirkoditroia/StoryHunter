@@ -145,6 +145,8 @@ export function summarize(book) {
     current_day: book.book_config.current_day,
     chapters: written,
     complete: written >= book.book_config.total_days,
+    archived: Boolean(book.archived),
+    title: String(book.closing?.book_title || "").trim(),
     profile_id: book.profile_id || "",
     updated_at: book.updated_at,
   };
@@ -319,10 +321,18 @@ async function migrateProfile() {
   return profile;
 }
 
+export async function archiveOpenBooks(profileId) {
+  for (const book of await loadAllBooks()) {
+    if (book.profile_id !== profileId || book.archived) continue;
+    book.archived = true;
+    await saveBook(book, { keepUpdatedAt: book.updated_at });
+  }
+}
+
 async function applyProfileToOpenBooks(profile) {
   const protagonist = protagonistFromProfile(profile);
   for (const book of await loadAllBooks()) {
-    if (book.profile_id !== profile.id) continue;
+    if (book.profile_id !== profile.id || book.archived) continue;
     const written = book.days?.length || 0;
     if (written >= book.book_config.total_days) continue;
     book.book_config.protagonist = { ...protagonist };
