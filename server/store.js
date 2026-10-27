@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { GENRE, answersFromProtagonist, profileFromAnswers } from "./meta.js";
+import { GENRE, profileFromAnswers } from "./meta.js";
 import { HttpError } from "./errors.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -296,21 +296,11 @@ async function loadAllBooks() {
 }
 
 async function migrateProfile() {
-  let profile = await readProfile();
+  // Dopo il logout profile.json non c'è. I libri restano sul disco, ma non
+  // riaprono il profilo: altrimenti un refresh rientra nel primo utente.
+  const profile = await readProfile();
+  if (!profile) return null;
   const books = await loadAllBooks();
-  if (!profile) {
-    if (!books.length) return null;
-    books.sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
-    const protagonist = books[0].book_config?.protagonist;
-    const answers = answersFromProtagonist(protagonist);
-    if (!answers || !protagonist?.name) return null;
-    profile = await createProfile({
-      name: protagonist.name,
-      age: protagonist.age,
-      gender: protagonist.gender,
-      answers,
-    });
-  }
   const name = profile.name.toLocaleLowerCase("it");
   for (const book of books) {
     const bookName = String(book.book_config?.protagonist?.name || "").toLocaleLowerCase("it");

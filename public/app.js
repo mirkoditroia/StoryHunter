@@ -899,18 +899,6 @@ function render() {
 
 function renderChrome() {
   const llm = state.meta?.llm;
-  const pill = $("#llm-pill");
-  const name = llm?.provider_label || "OpenAI";
-  if (!llm) {
-    pill.textContent = "OpenAI";
-    pill.className = "pill";
-  } else if (llm.configured) {
-    pill.textContent = `${name} · ${llm.model}`;
-    pill.className = "pill is-on";
-  } else {
-    pill.textContent = `${name} · chiave assente`;
-    pill.className = "pill is-off";
-  }
   paintKeyHint("#openai-hint", llm?.openai, "OpenAI");
   paintKeyHint("#google-hint", llm?.google, "Google");
 
@@ -955,23 +943,24 @@ function storyIsDone() {
 
 function storyNavLinks() {
   const done = storyIsDone();
-  const items = [["scheda", "Profilo"]];
-  if (done) items.unshift(["soglia", "Inizio"]);
+  const items = [];
+  if (done) items.push(["soglia", "Inizio"]);
   if (!done) items.push(["today", "Oggi"]);
-  items.push(["volume", "Libro"]);
-  if (archivedStories().length) items.push(["libri", "Libri"]);
+  items.push(["libri", "Libri"]);
   if (done) items.push(["new", "Nuova storia"]);
   return items
     .map(([id, label]) => {
-      const on = id === state.view;
+      const on = id === state.view || (id === "libri" && state.view === "volume");
       const fresh = id === "new" && done ? " is-fresh" : "";
-      const icon =
-        id === "scheda"
-          ? `<svg class="nav-mark" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="4.2" r="2.2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M2.9 14.2c.8-3 2.5-4.35 5.1-4.35s4.3 1.35 5.1 4.35" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>`
-          : "";
-      return `<button type="button" class="nav-link${on ? " is-on" : ""}${fresh}" data-nav="${id}"${on ? ' aria-current="page"' : ""}>${icon}${label}</button>`;
+      return `<button type="button" class="nav-link${on ? " is-on" : ""}${fresh}" data-nav="${id}"${on ? ' aria-current="page"' : ""}>${label}</button>`;
     })
     .join("");
+}
+
+function profileNavLink() {
+  const on = state.view === "scheda";
+  const icon = `<svg class="nav-mark" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="4.2" r="2.2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M2.9 14.2c.8-3 2.5-4.35 5.1-4.35s4.3 1.35 5.1 4.35" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>`;
+  return `<button type="button" class="nav-link nav-profile${on ? " is-on" : ""}" data-nav="scheda"${on ? ' aria-current="page"' : ""}>${icon}Profilo</button>`;
 }
 
 function paintStoryNav() {
@@ -982,7 +971,7 @@ function paintStoryNav() {
   const show = views.has(state.view) && hasStory && !isStudioWindow();
   nav.hidden = !show;
   nav.classList.toggle("is-float", show && (state.view === "soglia" || state.view === "scheda"));
-  nav.innerHTML = show ? storyNavLinks() : "";
+  nav.innerHTML = show ? `<div class="story-nav-main">${storyNavLinks()}</div>${profileNavLink()}` : "";
 }
 
 async function ensureHomeBook() {
@@ -996,6 +985,10 @@ async function ensureHomeBook() {
 }
 
 async function goHome(motion = "enter-back") {
+  if (!state.profile) {
+    go("cover", motion);
+    return;
+  }
   const summary = activeSummary();
   if (summary && !summary.complete) {
     if (state.book?.id === summary.id) {
@@ -1048,6 +1041,11 @@ async function onStoryNav(dest) {
 }
 
 async function enterFromCover() {
+  if (!state.profile) {
+    state.form = blankForm();
+    go("anagrafica", "enter-forward");
+    return;
+  }
   const summary = activeSummary();
   if (summary && !summary.complete) {
     await openBook(summary.id);
@@ -1098,7 +1096,7 @@ function armPactReveal() {
 function sogliaReturn(book) {
   if (book.complete) {
     return {
-      title: book.name,
+      title: book.title || book.name,
       pact: "I giorni di questo romanzo sono stati scritti.",
       label: "Apri il libro",
       complete: true,
@@ -2016,7 +2014,6 @@ function renderVolume() {
                 <div class="open-leaf" aria-hidden="true"></div>
                 <div class="open-cover">
                   <div class="open-cover-face">
-                    <p class="kicker">${esc(book.book_config.genre)}</p>
                     <h2 class="overture-title">${esc(closing.book_title)}</h2>
                     <div class="overture-rule" aria-hidden="true"></div>
                     <p class="overture-sub">${esc(closing.subtitle || "")}</p>
@@ -2031,7 +2028,6 @@ function renderVolume() {
       }
       <article class="book cinema-book">
         <header class="cover-page cinema-cover">
-          <p class="eyebrow">${esc(book.book_config.genre)}</p>
           <h2>${esc(closing.book_title)}</h2>
           <p class="cinema-subtitle">${esc(closing.subtitle || "")}</p>
           <p class="epigraph">${esc(closing.epigraph || "")}</p>
@@ -2153,8 +2149,9 @@ async function logoutProfile() {
     state.book = null;
     state.mountedKey = "";
     state.books = [];
+    state.form = blankForm();
     setBanner("", "");
-    go("soglia", "enter-forward");
+    go("cover", "enter-forward");
   } catch (error) {
     setBanner("error", error.message);
   }
@@ -2188,22 +2185,29 @@ async function createCycle() {
   }
 }
 
+function shelfButton(book, aside) {
+  const title = book.title || `Ciclo di ${book.name}`;
+  return `<button type="button" class="shelf-book" data-open="${esc(book.id)}"><span>${esc(title)}</span><small>${esc(aside)}</small></button>`;
+}
+
 function renderLibri() {
-  const shelf = archivedStories();
+  const current = activeSummary();
+  const open = current?.complete ? shelfButton(current, "il volume aperto") : "";
+  const archived = archivedStories()
+    .map((book) => shelfButton(book, `${book.total_days} giorni`))
+    .join("");
+  const lede = open
+    ? "In cima c'è il volume aperto. Sotto, quelli già chiusi."
+    : "Quando ne inizi uno nuovo, il precedente resta qui.";
   return `
     <section class="page">
       <article class="paper">
         <p class="eyebrow">Libri</p>
         <h2>I volumi conclusi</h2>
-        <p class="lede">Quando ne inizi uno nuovo, il precedente resta qui.</p>
+        <p class="lede">${lede}</p>
         ${
-          shelf.length
-            ? `<div class="book-shelf">${shelf
-                .map((book) => {
-                  const title = book.title || `Ciclo di ${book.name}`;
-                  return `<button type="button" class="shelf-book" data-open="${esc(book.id)}"><span>${esc(title)}</span><small>${book.total_days} giorni</small></button>`;
-                })
-                .join("")}</div>`
+          open || archived
+            ? `<div class="book-shelf">${open}${archived}</div>`
             : `<p class="quiet">Ancora nessun libro archiviato.</p>`
         }
       </article>
@@ -2777,6 +2781,10 @@ async function onClick(event) {
     return;
   }
   if (back) {
+    if (back.dataset.back === "soglia" && !state.profile) {
+      go("cover", "enter-back");
+      return;
+    }
     if (back.dataset.back === "soglia" && activeSummary() && !activeSummary().complete) {
       await goHome("enter-back");
       return;
