@@ -21,6 +21,8 @@ const state = {
   premiere: false,
   pactArrive: false,
   coverInking: false,
+  profile: null,
+  profileDraft: null,
 };
 
 const BARE_VIEWS = new Set(["cover", "soglia", "conferma", "scheda"]);
@@ -112,6 +114,132 @@ async function api(path, options = {}) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || "Richiesta non riuscita.");
   return data;
+}
+
+const DAY_JSON_KEY = "storyhunter-day-json";
+
+function readDayJsonStore() {
+  try {
+    const raw = localStorage.getItem(DAY_JSON_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function dayJsonFor(bookId, day) {
+  const text = readDayJsonStore()[bookId]?.[String(day)];
+  return typeof text === "string" ? text.trim() : "";
+}
+
+function writeDayJson(bookId, day, text) {
+  const all = readDayJsonStore();
+  const book = { ...(all[bookId] || {}) };
+  const clean = String(text || "").trim();
+  if (clean) book[String(day)] = clean;
+  else delete book[String(day)];
+  if (Object.keys(book).length) all[bookId] = book;
+  else delete all[bookId];
+  localStorage.setItem(DAY_JSON_KEY, JSON.stringify(all));
+}
+
+function showSettings() {
+  syncDayJsonPanel();
+  $("#settings").showModal();
+}
+
+function syncDayJsonPanel() {
+  const block = $("#day-json-block");
+  if (!block) return;
+  const book = state.book;
+  const open = Boolean(book && book.book_config.current_day <= book.book_config.total_days);
+  block.hidden = !open;
+  if (!open) return;
+  const select = $("#day-json-day");
+  const current = book.book_config.current_day;
+  select.innerHTML = Array.from({ length: book.book_config.total_days }, (_, index) => {
+    const day = index + 1;
+    const written = book.days.some((entry) => entry.day === day);
+    const mark = day === current ? " · in corso" : written ? " · scritto" : "";
+    return `<option value="${day}">Giorno ${roman(day)}${mark}</option>`;
+  }).join("");
+  select.value = String(Math.min(current, book.book_config.total_days));
+  loadDayJsonField();
+}
+
+function loadDayJsonField() {
+  const book = state.book;
+  const area = $("#day-json");
+  const hint = $("#day-json-hint");
+  if (!book || !area || !hint) return;
+  const day = Number($("#day-json-day").value);
+  const text = dayJsonFor(book.id, day);
+  area.value = text;
+  hint.classList.remove("is-bad");
+  delete hint.dataset.verdict;
+  hint.textContent = dayJsonStatus(book, day, text);
+}
+
+function dayJsonStatus(book, day, text) {
+  const current = book.book_config.current_day;
+  if (day < current) return "Questo giorno è già nel taccuino. Il JSON non lo riscrive.";
+  if (!text) return "Nessun JSON: questo giorno usa i dati simulati.";
+  if (day === current) return "Concludi Giornata userà questo testo, se la struttura torna.";
+  return "Resta qui fino a quel giorno.";
+}
+
+function onDayJsonInput() {
+  const book = state.book;
+  const area = $("#day-json");
+  const hint = $("#day-json-hint");
+  if (!book || !area) return;
+  const day = Number($("#day-json-day").value);
+  writeDayJson(book.id, day, area.value);
+  paintDayJsonNote();
+  if (!hint) return;
+  hint.classList.remove("is-bad");
+  delete hint.dataset.verdict;
+  hint.textContent = area.value.trim() ? "" : "Nessun JSON: questo giorno usa i dati simulati.";
+}
+
+function paintDayJsonNote() {
+  const note = $("#day-json-note");
+  if (!note || !state.book) return;
+  note.hidden = !dayJsonFor(state.book.id, state.book.book_config.current_day);
+}
+
+function clearDayJson() {
+  const area = $("#day-json");
+  if (!state.book || !area) return;
+  area.value = "";
+  onDayJsonInput();
+  const hint = $("#day-json-hint");
+  if (hint) hint.textContent = dayJsonStatus(state.book, Number($("#day-json-day").value), "");
+}
+
+async function checkDayJson() {
+  const area = $("#day-json");
+  const hint = $("#day-json-hint");
+  if (!area || !hint) return;
+  const text = area.value.trim();
+  if (!text) {
+    hint.classList.remove("is-bad");
+    hint.textContent = "Non c'è un JSON da controllare.";
+    return;
+  }
+  try {
+    const result = await api("/api/day-json/check", { method: "POST", body: { json: text } });
+    hint.classList.remove("is-bad");
+    hint.dataset.verdict = "ok";
+    hint.textContent = result.kind === "slots"
+      ? "Struttura degli slot riconosciuta."
+      : "Struttura della giornata riconosciuta.";
+  } catch (error) {
+    hint.classList.add("is-bad");
+    hint.dataset.verdict = "bad";
+    hint.textContent = error.message;
+  }
 }
 
 function setBanner(kind, text) {
@@ -615,7 +743,7 @@ function spillCoverInk(event) {
   if (state.coverInking) return;
   unlockAmbience();
   if (prefersReducedMotion()) {
-    go("soglia", "enter-forward");
+    enterFromCover();
     return;
   }
   state.coverInking = true;
@@ -635,7 +763,7 @@ function spillCoverInk(event) {
   window.setTimeout(() => {
     if (gen !== coverInkGen) return;
     blot.classList.add("is-leaving");
-    go("soglia", "enter-forward");
+    enterFromCover();
     window.setTimeout(() => {
       if (gen !== coverInkGen) return;
       blot.remove();
@@ -680,11 +808,13 @@ function render() {
   document.body.classList.toggle("is-premiere", Boolean(state.premiere) && state.view === "volume");
   $("#chrome").hidden = BARE_VIEWS.has(state.view);
   renderChrome();
+  paintStoryNav();
   const html = {
     cover: renderCover,
     soglia: renderSoglia,
     scheda: renderScheda,
     anagrafica: renderAnagrafica,
+    nuovo: renderNuovo,
     voce: renderVoce,
     conferma: renderConferma,
     today: renderToday,
@@ -702,7 +832,7 @@ function render() {
   }
   stage.innerHTML = html ? html() : "";
   if (state.view === "slot") renderPlaces();
-  if (state.view === "anagrafica") requestAnimationFrame(() => bindDaysSlider());
+  if (state.view === "anagrafica" || state.view === "nuovo") requestAnimationFrame(() => bindDaysSlider());
   if (state.view === "merge") {
     const area = $("#payload-json");
     if (area) area.value = state.payloadText;
@@ -780,14 +910,110 @@ function renderChrome() {
     : `${book.book_config.protagonist.name} · ${roman(day)} / ${roman(book.book_config.total_days)}`;
 }
 
-function cycleLinks() {
-  if (!state.book) return "";
-  return `
-    <nav class="cycle-links">
-      <button type="button" data-view="today">Oggi</button>
-      <button type="button" data-view="notebook">Capitoli sigillati</button>
-      <button type="button" data-view="volume">Volume</button>
-    </nav>`;
+function cycleComplete(book = state.book) {
+  return Boolean(book && book.book_config.current_day > book.book_config.total_days);
+}
+
+function storyIsDone() {
+  if (state.book) return cycleComplete(state.book);
+  return Boolean(state.books[0]?.complete);
+}
+
+function storyNavLinks() {
+  const done = storyIsDone();
+  const items = [["scheda", "Profilo"]];
+  if (done) items.unshift(["soglia", "Inizio"]);
+  if (!done) items.push(["today", "Oggi"]);
+  items.push(["notebook", "Capitoli"], ["volume", "Libro"]);
+  if (done) items.push(["new", "Nuova storia"]);
+  return items
+    .map(([id, label]) => {
+      const on = id === state.view;
+      const fresh = id === "new" && done ? " is-fresh" : "";
+      const icon =
+        id === "scheda"
+          ? `<svg class="nav-mark" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="4.2" r="2.2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M2.9 14.2c.8-3 2.5-4.35 5.1-4.35s4.3 1.35 5.1 4.35" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>`
+          : "";
+      return `<button type="button" class="nav-link${on ? " is-on" : ""}${fresh}" data-nav="${id}"${on ? ' aria-current="page"' : ""}>${icon}${label}</button>`;
+    })
+    .join("");
+}
+
+function paintStoryNav() {
+  const nav = $("#story-nav");
+  if (!nav) return;
+  const views = new Set(["soglia", "scheda", "today", "notebook", "volume", "memory"]);
+  const hasStory = state.view === "soglia" ? state.books.length > 0 : Boolean(state.book);
+  const show = views.has(state.view) && hasStory && !isStudioWindow();
+  nav.hidden = !show;
+  nav.classList.toggle("is-float", show && (state.view === "soglia" || state.view === "scheda"));
+  nav.innerHTML = show ? storyNavLinks() : "";
+}
+
+async function ensureHomeBook() {
+  const summary = state.books[0];
+  if (!summary) return null;
+  if (state.book?.id === summary.id) return state.book;
+  const { book } = await api(`/api/books/${summary.id}`);
+  state.book = book;
+  state.mountedKey = "";
+  return book;
+}
+
+async function goHome(motion = "enter-back") {
+  const summary = state.books[0];
+  if (summary && !summary.complete) {
+    if (state.book?.id === summary.id) {
+      go("today", motion);
+      publishOsservatorio();
+      return;
+    }
+    await openBook(summary.id);
+    return;
+  }
+  go("soglia", motion);
+}
+
+function startNewStory() {
+  if (state.books[0] && !state.books[0].complete) {
+    goHome("enter-forward");
+    return;
+  }
+  if (state.profile) {
+    state.form = {
+      name: state.profile.name,
+      age: state.profile.age,
+      gender: state.profile.gender,
+      total_days: 5,
+      answers: { ...state.profile.answers },
+    };
+    go("nuovo", "enter-forward");
+    return;
+  }
+  state.form = blankForm();
+  go("anagrafica", "enter-forward");
+}
+
+async function onStoryNav(dest) {
+  if (dest === "new") {
+    startNewStory();
+    return;
+  }
+  if (dest === "soglia") {
+    await goHome("enter-back");
+    return;
+  }
+  if (!(await ensureHomeBook())) return;
+  go(dest, "enter-forward");
+}
+
+async function enterFromCover() {
+  const summary = state.books[0];
+  if (summary && !summary.complete) {
+    await openBook(summary.id);
+    return;
+  }
+  go("soglia", "enter-forward");
 }
 
 function renderCover() {
@@ -827,7 +1053,8 @@ function sogliaReturn(book) {
     return {
       title: book.name,
       pact: "I giorni di questo romanzo sono stati scritti.",
-      label: "Apri il volume",
+      label: "Apri il libro",
+      complete: true,
     };
   }
   if (book.chapters <= 0) {
@@ -853,49 +1080,153 @@ function sogliaReturn(book) {
 
 function renderSoglia() {
   const arriving = Boolean(state.pactArrive) && !prefersReducedMotion();
+  const profile = state.profile;
   const book = state.books[0];
-  const back = book ? sogliaReturn(book) : null;
-  const pact = back ? back.pact : "La routine diventa prosa. La tua vita diventa un libro.";
-  const action = back
-    ? `<button type="button" class="soglia-params" id="open-scheda"><svg class="soglia-params-mark" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="4.2" r="2.2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M2.9 14.2c.8-3 2.5-4.35 5.1-4.35s4.3 1.35 5.1 4.35" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg><span>I parametri</span></button>
-       <button type="button" class="pact-open" data-open="${esc(book.id)}">${esc(back.label)}</button>
-       <button type="button" class="soglia-new" id="new-cycle">Inizia la tua nuova storia</button>`
-    : `<button type="button" class="pact-open" id="new-cycle">Inizia la tua storia</button>`;
+  if (!profile) {
+    return `
+      <section class="page soglia${arriving ? " is-arriving" : ""}">
+        <div class="soglia-inner">
+          <h1>Ogni giorno, un capitolo</h1>
+          <p class="pact">La routine diventa prosa. La tua vita diventa un libro.</p>
+          <button type="button" class="pact-open" id="new-cycle">Inizia la tua storia</button>
+        </div>
+      </section>`;
+  }
+  if (!book) {
+    return `
+      <section class="page soglia is-return${arriving ? " is-arriving" : ""}">
+        <div class="soglia-inner">
+          <h1>${esc(profile.name)}</h1>
+          <p class="pact">Il profilo c'è. Manca solo un libro.</p>
+          <button type="button" class="pact-open" data-nav="new">Apri un libro</button>
+        </div>
+      </section>`;
+  }
+  const back = sogliaReturn(book);
+  const again = back.complete
+    ? `<button type="button" class="story-again" data-nav="new">Inizia un'altra storia</button>`
+    : "";
   return `
-    <section class="page soglia${back ? " is-return" : ""}${arriving ? " is-arriving" : ""}">
+    <section class="page soglia is-return${arriving ? " is-arriving" : ""}">
       <div class="soglia-inner">
-        <h1>${back ? esc(back.title) : "Ogni giorno, un capitolo"}</h1>
-        <p class="pact">${pact}</p>
-        ${action}
+        <h1>${esc(back.title)}</h1>
+        <p class="pact">${back.pact}</p>
+        <button type="button" class="pact-open" data-open="${esc(book.id)}">${esc(back.label)}</button>
+        ${again}
       </div>
     </section>`;
 }
 
+function renderNuovo() {
+  const profile = state.profile;
+  if (!profile) return "";
+  return `
+    <section class="page">
+      <article class="paper" id="anagrafica-form">
+        <p class="eyebrow">Nuovo libro</p>
+        <h2>${esc(profile.name)}</h2>
+        <p class="lede">Le domande restano quelle del profilo. Si possono cambiare da Profilo, non si rifanno per ogni libro.</p>
+        <div class="block">
+          <p class="block-title">Quanto dura</p>
+          <label class="days-field">Giorni del ciclo
+            <span class="days-slider" id="days-slider">
+              <input name="total_days" type="hidden" value="${esc(state.form.total_days)}">
+              <span class="days-track" aria-hidden="true"></span>
+              <span class="days-thumb" aria-hidden="true"></span>
+              <output id="days-out">${state.form.total_days} giorni</output>
+            </span>
+          </label>
+        </div>
+        <div class="page-nav">
+          <button type="button" class="ghost" data-back="soglia">Indietro</button>
+          <button type="button" class="solid" id="create-book">Apri il taccuino</button>
+        </div>
+      </article>
+    </section>`;
+}
+
+function ensureProfileDraft() {
+  const profile = state.profile;
+  if (!profile) return null;
+  if (!state.profileDraft || state.profileDraft.id !== profile.id) {
+    state.profileDraft = {
+      id: profile.id,
+      name: profile.name,
+      age: profile.age,
+      gender: profile.gender,
+      answers: { ...profile.answers },
+    };
+  }
+  return state.profileDraft;
+}
+
 function renderScheda() {
-  const book = state.book;
-  const protagonist = book?.book_config?.protagonist;
-  if (!protagonist) return "";
-  const gender = state.meta.genders.find((item) => item.id === protagonist.gender);
-  const traits = state.meta.questions
-    .map((question) => {
-      const value = protagonist[question.parameter];
-      return `<li><span>${esc(question.title)}</span><strong>${esc(value || "—")}</strong></li>`;
-    })
-    .join("");
+  const draft = ensureProfileDraft();
+  if (!draft) return "";
   return `
     <section class="page scheda">
       <div class="scheda-inner">
-        <p class="eyebrow">I parametri</p>
-        <h1>${esc(protagonist.name)}</h1>
-        <ul class="scheda-facts">
-          <li>${esc(protagonist.age)} anni</li>
-          <li>${esc(gender ? gender.label : protagonist.gender)}</li>
-          <li>${esc(book.book_config.total_days)} giorni</li>
-        </ul>
-        <ul class="scheda-traits">${traits}</ul>
-        <button type="button" class="pact-open" data-back="soglia">Indietro</button>
+        <div id="profilo-form">
+          <p class="eyebrow">Profilo</p>
+          <h1>${esc(draft.name || "Profilo")}</h1>
+          <p class="lede">È tuo, non del singolo libro. Un libro nuovo riusa queste risposte. Puoi cambiarle quando vuoi.</p>
+          <label>Nome <input name="name" value="${esc(draft.name)}" maxlength="40"></label>
+          <div class="grid-2" style="margin-top: 0.9rem">
+            <div class="age-field">
+              <label for="profile-age">Età</label>
+              <div class="age-stepper">
+                <button type="button" class="age-nudge is-up" data-age-step="1" aria-label="Aumenta l'età"></button>
+                <input id="profile-age" name="age" type="number" min="16" max="99" inputmode="numeric" value="${esc(draft.age)}">
+                <button type="button" class="age-nudge is-down" data-age-step="-1" aria-label="Diminuisci l'età"></button>
+              </div>
+            </div>
+            <div>
+              <p class="quiet" style="margin: 0 0 0.4rem">Genere anagrafico</p>
+              <div class="choice-row">
+                ${state.meta.genders
+                  .map(
+                    (gender) =>
+                      `<button type="button" class="choice ${draft.gender === gender.id ? "is-on" : ""}" data-gender="${gender.id}" aria-pressed="${draft.gender === gender.id}">${esc(gender.label)}</button>`
+                  )
+                  .join("")}
+              </div>
+            </div>
+          </div>
+          <div class="questions">
+            ${state.meta.questions.map((question, index) => renderProfileQuestion(question, index)).join("")}
+          </div>
+          <div class="page-nav">
+            <button type="button" class="ghost" data-back="soglia">Indietro</button>
+            <button type="button" class="solid" id="save-profile">Salva il profilo</button>
+          </div>
+          <button type="button" class="story-again" id="logout-profile">Esci dal profilo</button>
+          <p class="quiet">Su questo dispositivo c'è un profilo alla volta. Esci se deve usarlo un'altra persona: i libri restano sul computer, ma non si vedono più.</p>
+        </div>
       </div>
     </section>`;
+}
+
+function renderProfileQuestion(question, index) {
+  const selected = state.profileDraft?.answers?.[question.id];
+  return `
+    <fieldset class="question">
+      <span class="question-num" aria-hidden="true">${index + 1}</span>
+      <div class="question-head">
+        <h3>${esc(question.title)}</h3>
+        <p>${esc(question.prompt)}</p>
+      </div>
+      <div class="choice-row">
+        ${question.options
+          .map(
+            (option) => `
+            <button type="button" class="choice answer ${selected === option.id ? "is-on" : ""}" data-profile-answer="${question.id}:${option.id}" aria-pressed="${selected === option.id}">
+              <span class="answer-mark">${option.id}</span>
+              <span class="answer-copy">${esc(option.label)}</span>
+            </button>`
+          )
+          .join("")}
+      </div>
+    </fieldset>`;
 }
 
 function renderAnagrafica() {
@@ -1145,17 +1476,21 @@ function scenarioSnapshot() {
   return { id: scenario.id, name: scenario.name, description: scenario.description };
 }
 
-function closedBookMarkup() {
+function finaleMarkup() {
   return `
-    <section class="page">
-      <article class="paper">
-        <p class="eyebrow">Ciclo concluso</p>
-        <h2>I giorni di questo romanzo sono stati scritti.</h2>
-        <p class="lede">Puoi rileggere il taccuino, controllare la memoria, oppure comporre il volume.</p>
-        <button type="button" class="solid" data-view="volume">Vai al volume</button>
-        ${cycleLinks()}
+    <section class="page finale">
+      <article class="paper finale-card">
+        <p class="eyebrow">Fine dei giorni</p>
+        <h2>I giorni sono stati scritti.</h2>
+        <p class="lede">Il volume è pronto. Aprilo, oppure comincia un'altra storia.</p>
+        <button type="button" class="pact-open" id="compose">Apri il libro</button>
+        <button type="button" class="story-again" data-nav="new">Inizia un'altra storia</button>
       </article>
     </section>`;
+}
+
+function closedBookMarkup() {
+  return finaleMarkup();
 }
 
 function renderToday() {
@@ -1169,6 +1504,7 @@ function renderToday() {
         <p class="eyebrow">Giorno ${roman(day)} di ${roman(book.book_config.total_days)}</p>
         <h2>Scrivi, se serve.</h2>
         <p class="lede">Annota gli accadimenti importanti della giornata.</p>
+        <p class="quiet" id="day-json-note"${dayJsonFor(book.id, day) ? "" : " hidden"}>Questa giornata segue il JSON delle impostazioni.</p>
         <label class="taccuino-field">Appunti
           <textarea id="day-notes" spellcheck="true" placeholder="13:40 Una frase, se vuoi.">${esc(state.notesText)}</textarea>
         </label>
@@ -1176,7 +1512,6 @@ function renderToday() {
           <button type="button" class="ghost" data-view="notebook">Capitoli sigillati</button>
           <button type="button" class="solid" id="end-day">Concludi Giornata</button>
         </div>
-        ${cycleLinks()}
       </article>
     </section>`;
 }
@@ -1443,7 +1778,6 @@ function renderMergePage() {
             <button type="button" class="ghost" id="load-sample">Carica l'esempio delle specifiche</button>
           </div>
         </details>
-        ${cycleLinks()}
       </article>
     </section>`;
 }
@@ -1505,7 +1839,7 @@ function applyPayload(payload) {
 function renderNotebook() {
   const book = state.book;
   if (!book) return "";
-  const complete = book.days.length >= book.book_config.total_days;
+  const done = cycleComplete(book);
   return `
     <section class="page">
       <p class="eyebrow">Taccuino del narratore</p>
@@ -1521,12 +1855,13 @@ function renderNotebook() {
       </div>
       <div class="page-nav">
         ${
-          complete
-            ? `<button type="button" class="solid" data-view="volume">Vai al volume</button>`
+          done
+            ? book.closing
+              ? `<button type="button" class="solid" data-view="volume">Apri il libro</button>`
+              : `<button type="button" class="solid" id="compose">Apri il libro</button>`
             : `<button type="button" class="solid" data-view="today">Giorno successivo</button>`
         }
       </div>
-      ${cycleLinks()}
     </section>`;
 }
 
@@ -1543,14 +1878,12 @@ function chapterCard(entry) {
         </div>
       </article>`;
   }
-  const warnings = (chapter.warnings || []).map((warning) => `<li>${esc(warning)}</li>`).join("");
   return `
     <article class="sheet" id="chapter-${entry.day}">
       <p class="quiet">Capitolo ${roman(entry.day)} · ${esc(entry.date)} · ${chapter.words || "—"} parole · ${esc(chapter.model || "")}</p>
       <h3>${esc(chapter.chapter_title)}</h3>
       ${subtitleLine(chapter.chapter_subtitle)}
       <div class="prose">${prose(chapter.chapter_text)}</div>
-      ${warnings ? `<ul class="quiet">${warnings}</ul>` : ""}
     </article>`;
 }
 
@@ -1607,7 +1940,6 @@ function renderMemory() {
             : ""
         }
       </div>
-      ${cycleLinks()}
     </section>`;
 }
 
@@ -1622,24 +1954,12 @@ function renderVolume() {
           <p class="eyebrow">Volume</p>
           <h2>Mancano ancora ${missing} ${missing === 1 ? "giorno" : "giorni"}.</h2>
           <p class="lede">Il romanzo si impagina quando ogni giorno del ciclo ha un capitolo.</p>
-          ${cycleLinks()}
         </article>
       </section>`;
   }
 
+  if (!book.closing) return finaleMarkup();
   const closing = book.closing;
-  if (!closing) {
-    return `
-      <section class="page">
-        <article class="paper compose-invite">
-          <p class="eyebrow">Volume</p>
-          <h2>Il ciclo è intero.</h2>
-          <p class="lede">Manca solo il frontespizio. Quando il libro è composto, si apre da solo.</p>
-          <button type="button" class="solid" id="compose">Componi il libro</button>
-        </article>
-        ${cycleLinks()}
-      </section>`;
-  }
   const premiering = state.premiere ? " is-premiering" : " is-open";
   return `
     <section class="page volume-premiere${premiering}">
@@ -1673,9 +1993,9 @@ function renderVolume() {
         </section>
       </article>
       <div class="volume-tools no-print">
+        <button type="button" class="story-again" data-nav="new">Inizia un'altra storia</button>
         <button type="button" class="ghost" id="print">Stampa o salva in PDF</button>
       </div>
-      ${cycleLinks()}
     </section>`;
 }
 
@@ -1724,6 +2044,68 @@ async function openBoundBook() {
   if (state.book?.id === book.id) state.book = result.book;
 }
 
+async function saveProfile() {
+  const draft = state.profileDraft;
+  if (!draft) return;
+  const name = String(draft.name || "").trim();
+  const age = Number(draft.age);
+  if (!name) {
+    setBanner("error", "Manca il nome.");
+    return;
+  }
+  if (!draft.gender) {
+    setBanner("error", "Scegli il genere anagrafico.");
+    return;
+  }
+  if (!Number.isInteger(age) || age < 16 || age > 99) {
+    setBanner("error", "L'età deve essere un numero fra 16 e 99.");
+    return;
+  }
+  const missing = state.meta.questions.find((question) => !draft.answers[question.id]);
+  if (missing) {
+    setBanner("error", `Manca una risposta: ${missing.title}.`);
+    return;
+  }
+  setBusy("Salvo il profilo…");
+  try {
+    const result = await api("/api/profile", {
+      method: "PUT",
+      body: { name, age, gender: draft.gender, answers: draft.answers },
+    });
+    state.profile = result.profile;
+    state.profileDraft = null;
+    if (state.book && !cycleComplete(state.book)) {
+      const loaded = await api(`/api/books/${state.book.id}`);
+      state.book = loaded.book;
+    }
+    state.books = (await api("/api/books")).books;
+    setBanner("ok", "Profilo aggiornato. I prossimi capitoli usano queste risposte.");
+    go("scheda", "replace");
+  } catch (error) {
+    setBanner("error", error.message);
+  } finally {
+    setBusy("");
+  }
+}
+
+async function logoutProfile() {
+  const name = state.profile?.name || "questo profilo";
+  if (!confirm(`Esci da ${name}? Un'altra persona potrà creare il proprio profilo. I libri restano su questo computer, ma non si vedono più.`)) return;
+  setBusy("");
+  try {
+    await api("/api/profile", { method: "DELETE" });
+    state.profile = null;
+    state.profileDraft = null;
+    state.book = null;
+    state.mountedKey = "";
+    state.books = [];
+    setBanner("", "");
+    go("soglia", "enter-forward");
+  } catch (error) {
+    setBanner("error", error.message);
+  }
+}
+
 async function createCycle() {
   const problem = formProblems();
   if (problem) {
@@ -1733,13 +2115,18 @@ async function createCycle() {
   setBanner("", "");
   setBusy("Si apre il taccuino…");
   try {
-    const { book } = await api("/api/books", { method: "POST", body: state.form });
-    state.book = book;
+    const created = await api("/api/books", {
+      method: "POST",
+      body: state.profile ? { total_days: state.form.total_days } : state.form,
+    });
+    state.book = created.book;
+    state.profile = created.profile;
+    state.profileDraft = null;
     state.mountedKey = "";
     state.books = (await api("/api/books")).books;
     go("today", "enter-forward");
     publishOsservatorio();
-    setBanner("ok", `Ciclo di ${book.book_config.protagonist.name} aperto.`);
+    setBanner("ok", `Ciclo di ${created.book.book_config.protagonist.name} aperto.`);
   } catch (error) {
     setBanner("error", error.message);
   } finally {
@@ -1794,7 +2181,7 @@ async function removeBook(id) {
       state.mountedKey = "";
     }
     state.books = (await api("/api/books")).books;
-    go("soglia", "enter-forward");
+    await goHome("enter-forward");
   } catch (error) {
     setBanner("error", error.message);
   }
@@ -1843,6 +2230,11 @@ async function loadPreset(id) {
 
 async function concludeDay() {
   if (state.busy) return;
+  const custom = dayJsonFor(state.book.id, state.book.book_config.current_day);
+  if (custom) {
+    await concludeFromJson(custom);
+    return;
+  }
   applyNotesToSlots(state.notesText);
   publishOsservatorio();
   await generate(
@@ -1851,11 +2243,45 @@ async function concludeDay() {
   );
 }
 
+async function concludeFromJson(text) {
+  let checked;
+  try {
+    checked = await api("/api/day-json/check", { method: "POST", body: { json: text } });
+  } catch (error) {
+    setBanner("error", error.message);
+    showSettings();
+    return;
+  }
+  const value = JSON.parse(text);
+  const busy = "Si chiude la giornata. Il narratore sta scrivendo il capitolo.";
+  if (checked.kind === "slots") {
+    const slots = Array.isArray(value) ? value : value.slots;
+    await generate(
+      { source: "slots", keep_slots: true, scenario_id: "", date: state.date, slots },
+      busy
+    );
+    return;
+  }
+  const telemetry = value.today_unified_telemetry || value;
+  await generate(
+    {
+      source: "editor",
+      scenario_id: "",
+      date: state.date,
+      payload: {
+        book_config: state.book.book_config,
+        today_unified_telemetry: telemetry,
+      },
+    },
+    busy
+  );
+}
+
 async function generate(body, busyText) {
   if (state.busy) return;
   if (!state.meta.llm.configured) {
     setBanner("error", `Manca la chiave API ${engineName()}.`);
-    $("#settings").showModal();
+    showSettings();
     return;
   }
   setBanner("", "");
@@ -1865,7 +2291,7 @@ async function generate(body, busyText) {
       method: "POST",
       body: {
         ...body,
-        scenario_id: body.scenario_id || state.scenarioId || "",
+        scenario_id: Object.hasOwn(body, "scenario_id") ? body.scenario_id : state.scenarioId || "",
         shift: state.scenarioShift || 0,
       },
       signal: typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
@@ -1874,17 +2300,13 @@ async function generate(body, busyText) {
     });
     state.book = result.book;
     state.mountedKey = "";
-    const warnings = (result.warnings || []).filter(Boolean);
-    setBanner(
-      warnings.length ? "error" : "ok",
-      warnings.length
-        ? `Capitolo scritto. ${warnings.join(" ")}`
-        : `Capitolo ${roman(result.book.days.at(-1).day)} sigillato nel taccuino. ${result.words} parole.`
-    );
-    go("notebook", "enter-forward");
+    const done = cycleComplete(result.book);
+    if (done) setBanner("", "");
+    else setBanner("ok", `Capitolo ${roman(result.book.days.at(-1).day)} sigillato.`);
+    go(done ? "volume" : "today", "enter-forward");
   } catch (error) {
     setBanner("error", error.message);
-    if (/chiave API/i.test(error.message)) $("#settings").showModal();
+    if (/chiave API/i.test(error.message)) showSettings();
   } finally {
     setBusy("");
   }
@@ -1984,6 +2406,14 @@ function onField(event) {
     return;
   }
 
+  if (event.target.closest("#profilo-form")) {
+    const el = event.target;
+    if (!state.profileDraft) return;
+    if (el.name === "name") state.profileDraft.name = el.value;
+    if (el.name === "age") state.profileDraft.age = Number(el.value);
+    return;
+  }
+
   if (!event.target.closest("#anagrafica-form")) return;
   const el = event.target;
   if (el.name === "name") state.form.name = el.value;
@@ -1997,7 +2427,8 @@ function nudgeAge(button) {
   const max = Number(input.max) || 99;
   const next = Math.min(max, Math.max(min, Number(input.value || min) + Number(button.dataset.ageStep)));
   input.value = String(next);
-  state.form.age = next;
+  const bucket = button.closest("#profilo-form") ? state.profileDraft : state.form;
+  if (bucket) bucket.age = next;
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
@@ -2112,10 +2543,16 @@ async function onClick(event) {
   const view = event.target.closest("[data-view]");
   const back = event.target.closest("[data-back]");
   const openChapter = event.target.closest("[data-open-chapter]");
+  const navJump = event.target.closest("[data-nav]");
+
+  if (navJump) {
+    await onStoryNav(navJump.dataset.nav);
+    return;
+  }
 
   if (event.target.closest("#brand")) {
     if (isStudioWindow()) return;
-    go("soglia", "enter-back");
+    await goHome("enter-back");
     return;
   }
   const watch = event.target.closest("[data-watch-book]");
@@ -2124,7 +2561,15 @@ async function onClick(event) {
     return;
   }
   if (event.target.closest("#open-settings")) {
-    $("#settings").showModal();
+    showSettings();
+    return;
+  }
+  if (event.target.closest("#check-day-json")) {
+    await checkDayJson();
+    return;
+  }
+  if (event.target.closest("#clear-day-json")) {
+    clearDayJson();
     return;
   }
   if (event.target.closest("#close-settings")) {
@@ -2152,13 +2597,36 @@ async function onClick(event) {
     return;
   }
   if (event.target.closest("#new-cycle")) {
-    state.form = blankForm();
-    go("anagrafica", "enter-forward");
+    startNewStory();
+    return;
+  }
+  if (event.target.closest("#save-profile")) {
+    await saveProfile();
+    return;
+  }
+  if (event.target.closest("#logout-profile")) {
+    await logoutProfile();
     return;
   }
   if (gender) {
+    if (gender.closest("#profilo-form") && state.profileDraft) {
+      state.profileDraft.gender = gender.dataset.gender;
+      markPressed("#profilo-form [data-gender]", state.profileDraft.gender, "data-gender");
+      return;
+    }
     state.form.gender = gender.dataset.gender;
     markPressed("[data-gender]", state.form.gender, "data-gender");
+    return;
+  }
+  const profileAnswer = event.target.closest("[data-profile-answer]");
+  if (profileAnswer && state.profileDraft) {
+    const [question, option] = profileAnswer.dataset.profileAnswer.split(":");
+    state.profileDraft.answers[question] = option;
+    document.querySelectorAll(`[data-profile-answer^="${question}:"]`).forEach((button) => {
+      const on = button.dataset.profileAnswer === `${question}:${option}`;
+      button.classList.toggle("is-on", on);
+      button.setAttribute("aria-pressed", on ? "true" : "false");
+    });
     return;
   }
   if (answer) {
@@ -2193,6 +2661,10 @@ async function onClick(event) {
     return;
   }
   if (back) {
+    if (back.dataset.back === "soglia" && state.books[0] && !state.books[0].complete) {
+      await goHome("enter-back");
+      return;
+    }
     go(back.dataset.back, "enter-back");
     return;
   }
@@ -2267,10 +2739,10 @@ async function onClick(event) {
   if (event.target.closest("#compose")) {
     if (!state.meta.llm.configured) {
       setBanner("error", `Manca la chiave API ${engineName()}.`);
-      $("#settings").showModal();
+      showSettings();
       return;
     }
-    setBusy("Il libro si sta componendo.");
+    setBusy("Si apre il libro.");
     try {
       const result = await api(`/api/books/${state.book.id}/close`, {
         method: "POST",
@@ -2325,6 +2797,7 @@ function bind() {
   document.addEventListener("change", (event) => {
     if (event.target.id === "day-date") state.date = event.target.value;
     if (event.target.id === "raw-json") state.raw = event.target.checked;
+    if (event.target.id === "day-json-day") loadDayJsonField();
     if (event.target.dataset?.placeField || event.target.dataset?.field) onField(event);
   });
   window.addEventListener("storage", (event) => {
@@ -2335,6 +2808,7 @@ function bind() {
     if (state.view === "studio") refreshStudioLive();
   }, 900);
   document.addEventListener("input", (event) => {
+    if (event.target.id === "day-json") onDayJsonInput();
     if (event.target.id === "payload-json") {
       state.payloadText = event.target.value;
       try {
@@ -2357,9 +2831,14 @@ async function boot() {
   armInkTrail();
   watchWaitInk();
   try {
-    const [meta, library] = await Promise.all([api("/api/meta"), api("/api/books")]);
+    const [meta, library, session] = await Promise.all([
+      api("/api/meta"),
+      api("/api/books"),
+      api("/api/profile"),
+    ]);
     state.meta = meta;
     state.books = library.books;
+    state.profile = session.profile;
     state.date = meta.today;
     fillModelSelect();
     if (isStudioWindow()) {

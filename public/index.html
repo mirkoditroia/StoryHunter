@@ -21,16 +21,21 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <header id="chrome" class="chrome" hidden>
-      <button type="button" id="brand" class="brand">
-        <span class="brand-mark">Storyhunter</span>
-      </button>
-      <p id="chrome-progress" class="chrome-progress"></p>
-      <div class="chrome-actions">
-        <span id="llm-pill" class="pill">OpenAI</span>
-        <button type="button" id="open-settings" class="ghost">Impostazioni</button>
-      </div>
-    </header>
+    <div class="topbar">
+      <header id="chrome" class="chrome" hidden>
+        <div class="chrome-row">
+          <button type="button" id="brand" class="brand">
+            <span class="brand-mark">Storyhunter</span>
+          </button>
+          <p id="chrome-progress" class="chrome-progress"></p>
+          <div class="chrome-actions">
+            <span id="llm-pill" class="pill">OpenAI</span>
+            <button type="button" id="open-settings" class="ghost">Impostazioni</button>
+          </div>
+        </div>
+      </header>
+      <nav id="story-nav" class="story-nav" hidden aria-label="Pagine"></nav>
+    </div>
 
     <div id="banner" class="banner" role="status" hidden></div>
 
@@ -86,6 +91,33 @@
           <button type="button" id="close-settings" class="ghost">Chiudi</button>
         </div>
       </form>
+      <div id="day-json-block" hidden>
+        <p class="eyebrow">Prova</p>
+        <h2>JSON della giornata</h2>
+        <p class="lede">
+          Per le prove, un JSON per ogni giorno. Va bene la giornata cucita, con
+          <code>today_unified_telemetry</code>, oppure i quattro slot. Profilo e memoria non cambiano.
+          Se il giorno in corso ne ha uno, Concludi Giornata usa quello al posto dei dati simulati.
+        </p>
+        <label>
+          Giorno
+          <select id="day-json-day"></select>
+        </label>
+        <label>
+          JSON
+          <textarea
+            id="day-json"
+            class="json"
+            spellcheck="false"
+            placeholder='{ "today_unified_telemetry": { "unified_scenes": [{ "time_window": "08:30 - 12:30", "location_alias": "casa", "biometric_vibe": "Fermo" }], "midnight_cutoff_status": "AT_HOME_RESTING" } }'
+          ></textarea>
+        </label>
+        <p class="quiet" id="day-json-hint"></p>
+        <div class="dialog-actions">
+          <button type="button" class="ghost" id="check-day-json">Controlla la struttura</button>
+          <button type="button" class="ghost" id="clear-day-json">Togli</button>
+        </div>
+      </div>
     </dialog>
 
     <script src="/app.js" type="module"></script>

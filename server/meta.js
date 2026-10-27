@@ -305,6 +305,16 @@ export function profileFromAnswers(answers) {
   return protagonist;
 }
 
+export function answersFromProtagonist(protagonist) {
+  const answers = {};
+  for (const question of QUESTIONS) {
+    const option = question.options.find((item) => item.value === protagonist?.[question.parameter]);
+    if (!option) return null;
+    answers[question.id] = option.id;
+  }
+  return answers;
+}
+
 export function genderVoice(gender) {
   if (gender === "F") return "Usa il femminile grammaticale per il protagonista.";
   if (gender === "M") return "Usa il maschile grammaticale per il protagonista.";

@@ -20,17 +20,24 @@ import {
 import { PRESET_LIST, buildPreset } from "./presets.js";
 import { applySimulatedTelemetry, listScenarios } from "./scenarios.js";
 import { mergeDay } from "./merger.js";
+import { assertDayTelemetry, inspectDayJson } from "./dayjson.js";
 import { composeVolume, llmStatus, writeChapter } from "./narrator.js";
 import { samplePayload } from "./sample.js";
 import {
   createBook,
+  createProfile,
   dateForDay,
   deleteBook,
   ensureData,
+  ensureProfile,
   listBooks,
   loadBook,
   localISODate,
+  logoutProfile,
+  publicProfile,
   saveBook,
+  updateProfile,
+  visibleBooks,
   writeSettings,
 } from "./store.js";
 import { HttpError } from "./errors.js";
@@ -91,9 +98,38 @@ app.put("/api/settings", async (req, res, next) => {
   }
 });
 
+app.get("/api/profile", async (_req, res, next) => {
+  try {
+    res.json({ profile: publicProfile(await ensureProfile()) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put("/api/profile", async (req, res, next) => {
+  try {
+    const current = await ensureProfile();
+    if (!current) throw new HttpError(400, "Non c'è ancora un profilo su questo dispositivo.");
+    const profile = await updateProfile(current, req.body || {});
+    res.json({ profile: publicProfile(profile) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete("/api/profile", async (_req, res, next) => {
+  try {
+    await logoutProfile();
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get("/api/books", async (_req, res, next) => {
   try {
-    res.json({ books: await listBooks() });
+    const profile = await ensureProfile();
+    res.json({ books: visibleBooks(await listBooks(), profile?.id) });
   } catch (error) {
     next(error);
   }
@@ -101,9 +137,27 @@ app.get("/api/books", async (_req, res, next) => {
 
 app.post("/api/books", async (req, res, next) => {
   try {
-    const book = createBook(req.body || {});
+    const profile = await ensureProfile();
+    if (profile) {
+      const mine = visibleBooks(await listBooks(), profile.id);
+      if (mine.some((book) => !book.complete)) {
+        throw new HttpError(400, "Il libro in corso non è ancora concluso.");
+      }
+    }
+    const source = profile
+      ? {
+          name: profile.name,
+          age: profile.age,
+          gender: profile.gender,
+          answers: profile.answers,
+          total_days: req.body?.total_days,
+        }
+      : req.body || {};
+    const book = createBook(source);
+    const person = profile || (await createProfile(source));
+    book.profile_id = person.id;
     await saveBook(book);
-    res.status(201).json({ book });
+    res.status(201).json({ book, profile: publicProfile(person) });
   } catch (error) {
     next(error);
   }
@@ -182,13 +236,16 @@ app.post("/api/books/:id/generate", async (req, res, next) => {
           date: payload.today_unified_telemetry.date || date,
         };
       }
+      assertDayTelemetry(payload.today_unified_telemetry);
     } else {
-      slots = applySimulatedTelemetry(req.body?.slots, {
-        bookId: book.id,
-        day,
-        shift: Number(req.body?.shift) || 0,
-        avoid: book.days.map((entry) => entry.scenario_id).filter(Boolean),
-      });
+      slots = req.body?.keep_slots
+        ? req.body?.slots
+        : applySimulatedTelemetry(req.body?.slots, {
+            bookId: book.id,
+            day,
+            shift: Number(req.body?.shift) || 0,
+            avoid: book.days.map((entry) => entry.scenario_id).filter(Boolean),
+          });
       payload = mergeDay({ book, day, date, slots });
     }
 
@@ -301,6 +358,14 @@ app.get("/api/sample-payload", (_req, res) => {
   res.json({ payload: samplePayload });
 });
 
+app.post("/api/day-json/check", (req, res, next) => {
+  try {
+    res.json(inspectDayJson(req.body?.json));
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.use("/api", (_req, res) => {
   res.status(404).json({ error: "Endpoint non trovato." });
 });
@@ -323,7 +388,10 @@ app.use((error, _req, res, _next) => {
 
 async function requireBook(id) {
   const book = await loadBook(id);
-  if (!book) throw new HttpError(404, "Libro non trovato.");
+  const profile = await ensureProfile();
+  if (!book || !profile || book.profile_id !== profile.id) {
+    throw new HttpError(404, "Libro non trovato.");
+  }
   return book;
 }
 

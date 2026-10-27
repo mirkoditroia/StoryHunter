@@ -1,13 +1,15 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { GENRE, profileFromAnswers } from "./meta.js";
+import { GENRE, answersFromProtagonist, profileFromAnswers } from "./meta.js";
 import { HttpError } from "./errors.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dataDir = path.join(root, "data");
 const booksDir = path.join(dataDir, "books");
+const profilesDir = path.join(dataDir, "profiles");
 const settingsFile = path.join(dataDir, "settings.json");
+const profileFile = path.join(dataDir, "profile.json");
 
 export async function ensureData() {
   await fs.mkdir(booksDir, { recursive: true });
@@ -67,9 +69,9 @@ export async function loadBook(id) {
   }
 }
 
-export async function saveBook(book) {
+export async function saveBook(book, options = {}) {
   assertId(book.id);
-  book.updated_at = new Date().toISOString();
+  book.updated_at = options.keepUpdatedAt || new Date().toISOString();
   await fs.writeFile(bookPath(book.id), JSON.stringify(book, null, 2), "utf8");
   return book;
 }
@@ -143,8 +145,78 @@ export function summarize(book) {
     current_day: book.book_config.current_day,
     chapters: written,
     complete: written >= book.book_config.total_days,
+    profile_id: book.profile_id || "",
     updated_at: book.updated_at,
   };
+}
+
+export function visibleBooks(books, profileId) {
+  if (!profileId) return [];
+  return books.filter((book) => book.profile_id === profileId);
+}
+
+export function publicProfile(profile) {
+  if (!profile) return null;
+  return {
+    id: profile.id,
+    name: profile.name,
+    age: profile.age,
+    gender: profile.gender,
+    answers: { ...profile.answers },
+  };
+}
+
+export function protagonistFromProfile(profile) {
+  return {
+    name: profile.name,
+    age: profile.age,
+    gender: profile.gender,
+    ...profileFromAnswers(profile.answers),
+  };
+}
+
+let profilePending = null;
+
+export function ensureProfile() {
+  if (!profilePending) {
+    profilePending = migrateProfile().finally(() => {
+      profilePending = null;
+    });
+  }
+  return profilePending;
+}
+
+export async function createProfile(input) {
+  const person = assertPerson(input);
+  const now = new Date().toISOString();
+  const profile = {
+    id: `pf_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+    ...person,
+    created_at: now,
+    updated_at: now,
+  };
+  await writeProfile(profile);
+  return profile;
+}
+
+export async function updateProfile(profile, input) {
+  const person = assertPerson(input);
+  const next = {
+    ...profile,
+    ...person,
+    updated_at: new Date().toISOString(),
+  };
+  await writeProfile(next);
+  await applyProfileToOpenBooks(next);
+  return next;
+}
+
+export async function logoutProfile() {
+  const profile = await readProfile();
+  if (!profile) return;
+  await fs.mkdir(profilesDir, { recursive: true });
+  await fs.writeFile(path.join(profilesDir, `${profile.id}.json`), JSON.stringify(profile, null, 2), "utf8");
+  await fs.rm(profileFile, { force: true });
 }
 
 export function localISODate(date = new Date()) {
@@ -170,4 +242,90 @@ function assertId(id) {
 
 function clean(value, max) {
   return String(value || "").replace(/\s+/g, " ").trim().slice(0, max);
+}
+
+function assertPerson(input) {
+  const name = clean(input?.name, 40);
+  if (!name) throw new HttpError(400, "Manca il nome del protagonista.");
+  const age = Number(input?.age);
+  if (!Number.isInteger(age) || age < 16 || age > 99) {
+    throw new HttpError(400, "L'età deve essere un numero fra 16 e 99.");
+  }
+  const gender = ["F", "M", "X"].includes(input?.gender) ? input.gender : null;
+  if (!gender) throw new HttpError(400, "Scegli un genere anagrafico.");
+  let traits;
+  try {
+    traits = profileFromAnswers(input?.answers);
+  } catch (error) {
+    throw new HttpError(400, error.message);
+  }
+  return { name, age, gender, answers: { ...input.answers }, traits };
+}
+
+async function readProfile() {
+  try {
+    const parsed = JSON.parse(await fs.readFile(profileFile, "utf8"));
+    if (!parsed?.id || !parsed?.name || !parsed?.answers) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+async function writeProfile(profile) {
+  await ensureData();
+  await fs.writeFile(profileFile, JSON.stringify(profile, null, 2), "utf8");
+  return profile;
+}
+
+async function loadAllBooks() {
+  await ensureData();
+  const files = await fs.readdir(booksDir);
+  const books = [];
+  for (const file of files) {
+    if (!file.endsWith(".json")) continue;
+    try {
+      books.push(JSON.parse(await fs.readFile(path.join(booksDir, file), "utf8")));
+    } catch {
+      /* un file illeggibile non entra nel profilo */
+    }
+  }
+  return books;
+}
+
+async function migrateProfile() {
+  let profile = await readProfile();
+  const books = await loadAllBooks();
+  if (!profile) {
+    if (!books.length) return null;
+    books.sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
+    const protagonist = books[0].book_config?.protagonist;
+    const answers = answersFromProtagonist(protagonist);
+    if (!answers || !protagonist?.name) return null;
+    profile = await createProfile({
+      name: protagonist.name,
+      age: protagonist.age,
+      gender: protagonist.gender,
+      answers,
+    });
+  }
+  const name = profile.name.toLocaleLowerCase("it");
+  for (const book of books) {
+    const bookName = String(book.book_config?.protagonist?.name || "").toLocaleLowerCase("it");
+    if (book.profile_id || bookName !== name) continue;
+    book.profile_id = profile.id;
+    await saveBook(book, { keepUpdatedAt: book.updated_at });
+  }
+  return profile;
+}
+
+async function applyProfileToOpenBooks(profile) {
+  const protagonist = protagonistFromProfile(profile);
+  for (const book of await loadAllBooks()) {
+    if (book.profile_id !== profile.id) continue;
+    const written = book.days?.length || 0;
+    if (written >= book.book_config.total_days) continue;
+    book.book_config.protagonist = { ...protagonist };
+    await saveBook(book, { keepUpdatedAt: book.updated_at });
+  }
 }
