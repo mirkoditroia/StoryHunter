@@ -156,9 +156,8 @@ h3 {
   z-index: 6;
 }
 .topbar:has(#chrome:not([hidden])) {
-  background: rgba(237, 217, 204, 0.92);
-  backdrop-filter: blur(10px);
-  border-bottom: 1px solid var(--line);
+  background: none;
+  border-bottom: 0;
 }
 .topbar:has(#chrome[hidden]) {
   position: static;
@@ -167,8 +166,9 @@ h3 {
 .chrome {
   display: block;
   padding: 0.75rem 1.4rem 0.65rem;
-  background: transparent;
-  border-bottom: 0;
+  background: rgba(237, 217, 204, 0.92);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line);
 }
 .chrome-row {
   display: flex;
@@ -204,6 +204,7 @@ h3 {
   align-items: baseline;
   margin: 0;
   padding: 0.55rem 1.4rem 0.7rem;
+  background: transparent;
 }
 .story-nav-main {
   grid-column: 2;
@@ -1226,6 +1227,20 @@ body:has(#taccuino-attivo) {
 #taccuino-attivo .cycle-links {
   margin-top: 0.75rem;
   gap: 0.7rem;
+}
+#lettura h2 {
+  margin: 0.15rem 0 0.45rem;
+  font-size: clamp(1.7rem, 7vw, 2.4rem);
+  font-weight: 560;
+  font-variation-settings: "opsz" 48, "SOFT" 40, "WONK" 0;
+  letter-spacing: -0.03em;
+  line-height: 1.2;
+}
+#lettura .chapter-subtitle { margin-top: 0.15rem; }
+#lettura .prose { margin-top: 1.15rem; }
+#lettura .page-nav {
+  margin-top: 2rem;
+  justify-content: flex-end;
 }
 .paper .lede {
   color: var(--muted);

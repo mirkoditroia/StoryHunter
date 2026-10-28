@@ -847,6 +847,7 @@ function render() {
     slot: renderSlotPage,
     merge: renderMergePage,
     notebook: renderNotebook,
+    lettura: renderLettura,
     memory: renderMemory,
     volume: renderVolume,
   }[state.view];
@@ -888,6 +889,7 @@ function render() {
     const last = state.book?.days.at(-1);
     if (last) document.getElementById(`chapter-${last.day}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
+  if (state.view === "lettura") window.scrollTo(0, 0);
   if (state.view === "volume") armPremiere();
   if (state.view === "soglia" && state.pactArrive && !prefersReducedMotion()) {
     armPactReveal();
@@ -916,6 +918,13 @@ function renderChrome() {
     progress.textContent = `${book.book_config.protagonist.name} · taccuino`;
     return;
   }
+  if (state.view === "lettura") {
+    const entry = book.days.at(-1);
+    progress.textContent = entry
+      ? `${book.book_config.protagonist.name} · capitolo ${roman(entry.day)}`
+      : "";
+    return;
+  }
   const day = Math.min(book.book_config.current_day, book.book_config.total_days);
   const done = book.book_config.current_day > book.book_config.total_days;
   progress.textContent = done
@@ -941,6 +950,10 @@ function storyIsDone() {
   return Boolean(current.complete);
 }
 
+function hasGeneratedText(book = state.book) {
+  return Boolean(String(book?.days?.at(-1)?.chapter?.chapter_text || "").trim());
+}
+
 function storyNavLinks() {
   const done = storyIsDone();
   const items = [];
@@ -950,7 +963,10 @@ function storyNavLinks() {
   if (done) items.push(["new", "Nuova storia"]);
   return items
     .map(([id, label]) => {
-      const on = id === state.view || (id === "libri" && state.view === "volume");
+      const on =
+        (id === "libri" && state.view === "volume") ||
+        (id === "today" && (state.view === "lettura" || (state.view === "today" && !hasGeneratedText()))) ||
+        (id !== "today" && id === state.view);
       const fresh = id === "new" && done ? " is-fresh" : "";
       return `<button type="button" class="nav-link${on ? " is-on" : ""}${fresh}" data-nav="${id}"${on ? ' aria-current="page"' : ""}>${label}</button>`;
     })
@@ -966,7 +982,7 @@ function profileNavLink() {
 function paintStoryNav() {
   const nav = $("#story-nav");
   if (!nav) return;
-  const views = new Set(["soglia", "scheda", "today", "notebook", "volume", "memory", "libri"]);
+  const views = new Set(["soglia", "scheda", "today", "notebook", "lettura", "volume", "memory", "libri"]);
   const hasStory = state.view === "soglia" ? state.books.length > 0 : Boolean(state.book);
   const show = views.has(state.view) && hasStory && !isStudioWindow();
   nav.hidden = !show;
@@ -1037,7 +1053,7 @@ async function onStoryNav(dest) {
     return;
   }
   if (!(await ensureHomeBook())) return;
-  go(dest, "enter-forward");
+  go(dest === "today" && hasGeneratedText() ? "lettura" : dest, "enter-forward");
 }
 
 async function enterFromCover() {
@@ -1536,6 +1552,28 @@ function finaleMarkup() {
 
 function closedBookMarkup() {
   return finaleMarkup();
+}
+
+function renderLettura() {
+  const book = state.book;
+  const entry = book?.days.at(-1);
+  const chapter = entry?.chapter;
+  if (!book || !chapter) return "";
+  const done = cycleComplete(book);
+  const title = chapter.chapter_title || `Capitolo ${roman(entry.day)}`;
+  const next = done
+    ? `<button type="button" class="solid" id="compose">Apri il libro</button>`
+    : `<button type="button" class="solid" id="read-next">Giorno successivo</button>`;
+  return `
+    <section class="page">
+      <article class="paper" id="lettura">
+        <p class="eyebrow">Capitolo ${roman(entry.day)}</p>
+        <h2>${esc(title)}</h2>
+        ${subtitleLine(chapter.chapter_subtitle)}
+        <div class="prose">${prose(chapter.chapter_text)}</div>
+        <div class="page-nav">${next}</div>
+      </article>
+    </section>`;
 }
 
 function renderToday() {
@@ -2380,13 +2418,10 @@ async function generate(body, busyText) {
     });
     state.book = result.book;
     state.mountedKey = "";
-    const done = cycleComplete(result.book);
-    if (!done) {
-      setBanner("ok", "La giornata è chiusa.");
-      go("today", "enter-forward");
-      return;
-    }
+    state.notesText = "";
     setBanner("", "");
+    go("lettura", "enter-forward");
+    return;
   } catch (error) {
     setBanner("error", error.message);
     if (/chiave API/i.test(error.message)) showSettings();
@@ -2394,7 +2429,6 @@ async function generate(body, busyText) {
   } finally {
     setBusy("");
   }
-  await openTheBook();
 }
 
 async function openTheBook() {
@@ -2806,6 +2840,10 @@ async function onClick(event) {
   }
   if (event.target.closest("#end-day")) {
     await concludeDay();
+    return;
+  }
+  if (event.target.closest("#read-next")) {
+    go("today", "enter-forward");
     return;
   }
   if (event.target.closest("#start-day") || event.target.closest("#slot-back") || event.target.closest("#slot-next") || event.target.closest("#back-to-slots")) {
