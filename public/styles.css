@@ -489,19 +489,21 @@ h3 {
   100% { transform: translate3d(10%, 0, 0) rotateY(16deg); opacity: 0; }
 }
 @keyframes leafTurnIn {
-  from { transform: translate3d(6%, 0, 0) rotateY(6deg); opacity: 0; }
-  to { transform: translate3d(0, 0, 0) rotateY(0); opacity: 1; }
+  0% { transform: translate3d(5%, 0, 0) rotateY(5deg); opacity: 0; }
+  82% { transform: translate3d(0, 0, 0); opacity: 1; }
+  100% { transform: translate3d(0, 0, 0); opacity: 1; }
 }
 @keyframes leafTurnInBack {
-  from { transform: translate3d(-6%, 0, 0) rotateY(-6deg); opacity: 0; }
-  to { transform: translate3d(0, 0, 0) rotateY(0); opacity: 1; }
+  0% { transform: translate3d(-5%, 0, 0) rotateY(-5deg); opacity: 0; }
+  82% { transform: translate3d(0, 0, 0); opacity: 1; }
+  100% { transform: translate3d(0, 0, 0); opacity: 1; }
 }
 
 .page {
   width: min(var(--paper-max), calc(100% - 2.8rem));
   margin: 0 auto;
   padding: 2.5rem 0 5.5rem;
-  transform: translateZ(0);
+  transform: translate3d(0, 0, 0);
 }
 
 .page.cover,
@@ -573,7 +575,7 @@ body:has(.page.scheda) {
 .stage.enter-forward .page { animation: pageIn 420ms var(--ease-page) both; }
 .stage.enter-back .page { animation: pageBack 320ms ease both; }
 .stage.enter-cover .page { animation: coverFade 800ms var(--ease-page) both; }
-.stage.enter-soglia .page { animation: sogliaPageIn 1.25s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.stage.enter-soglia .page { animation: sogliaPageIn 1.05s cubic-bezier(0.33, 0, 0.2, 1) both; }
 @keyframes sogliaPageIn {
   from { opacity: 0; }
   to { opacity: 1; }
@@ -582,12 +584,12 @@ body:has(.page.scheda) {
 .stage.slot-prev .page { animation: slotPrev 380ms var(--ease-page) both; }
 
 @keyframes pageIn {
-  from { opacity: 0; transform: translateY(20px); }
-  to { opacity: 1; transform: none; }
+  from { opacity: 0; transform: translate3d(0, 12px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
 }
 @keyframes pageBack {
-  from { opacity: 0; transform: translateY(-12px); }
-  to { opacity: 1; transform: none; }
+  from { opacity: 0; transform: translate3d(0, -8px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
 }
 @keyframes coverFade {
   from { opacity: 0; }
@@ -1042,7 +1044,7 @@ body:has(.page.scheda) {
 }
 
 .soglia.is-arriving h1 {
-  animation: pactFade 1.05s ease 0.22s both;
+  animation: none;
 }
 .soglia.is-arriving .pact {
   -webkit-mask-image: linear-gradient(90deg, #000 0%, #000 72%, transparent 100%);

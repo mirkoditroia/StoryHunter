@@ -879,7 +879,9 @@ function render() {
       }
       ghost.removeEventListener("animationend", settle);
       host.remove();
-      stage.classList.remove("is-turning", "is-turning-back");
+      window.requestAnimationFrame(() => {
+        stage.classList.remove("is-turning", "is-turning-back");
+      });
     };
     ghost.addEventListener("animationend", settle);
     window.setTimeout(() => settle(), dissolving ? 1400 : 1100);
@@ -950,10 +952,6 @@ function storyIsDone() {
   return Boolean(current.complete);
 }
 
-function hasGeneratedText(book = state.book) {
-  return Boolean(String(book?.days?.at(-1)?.chapter?.chapter_text || "").trim());
-}
-
 function storyNavLinks() {
   const done = storyIsDone();
   const items = [];
@@ -965,7 +963,7 @@ function storyNavLinks() {
     .map(([id, label]) => {
       const on =
         (id === "libri" && state.view === "volume") ||
-        (id === "today" && (state.view === "lettura" || (state.view === "today" && !hasGeneratedText()))) ||
+        (id === "today" && state.view === "today") ||
         (id !== "today" && id === state.view);
       const fresh = id === "new" && done ? " is-fresh" : "";
       return `<button type="button" class="nav-link${on ? " is-on" : ""}${fresh}" data-nav="${id}"${on ? ' aria-current="page"' : ""}>${label}</button>`;
@@ -1053,7 +1051,7 @@ async function onStoryNav(dest) {
     return;
   }
   if (!(await ensureHomeBook())) return;
-  go(dest === "today" && hasGeneratedText() ? "lettura" : dest, "enter-forward");
+  go(dest, "enter-forward");
 }
 
 async function enterFromCover() {
@@ -2420,7 +2418,11 @@ async function generate(body, busyText) {
     state.mountedKey = "";
     state.notesText = "";
     setBanner("", "");
-    go("lettura", "enter-forward");
+    if (cycleComplete(result.book)) {
+      await openTheBook();
+      return;
+    }
+    go("today", "enter-forward");
     return;
   } catch (error) {
     setBanner("error", error.message);
