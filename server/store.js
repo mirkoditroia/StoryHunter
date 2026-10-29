@@ -5,7 +5,9 @@ import { GENRE, profileFromAnswers } from "./meta.js";
 import { HttpError } from "./errors.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const dataDir = path.join(root, "data");
+const dataDir = process.env.STORYHUNTER_DATA
+  ? path.resolve(process.env.STORYHUNTER_DATA)
+  : path.join(root, "data");
 const booksDir = path.join(dataDir, "books");
 const profilesDir = path.join(dataDir, "profiles");
 const settingsFile = path.join(dataDir, "settings.json");
@@ -177,15 +179,25 @@ export function protagonistFromProfile(profile) {
   };
 }
 
+let profileEpoch = 0;
 let profilePending = null;
+let loggingOut = false;
+let logoutDone = Promise.resolve();
 
 export function ensureProfile() {
-  if (!profilePending) {
-    profilePending = migrateProfile().finally(() => {
-      profilePending = null;
-    });
-  }
-  return profilePending;
+  if (profilePending) return profilePending;
+  const epoch = profileEpoch;
+  const run = (async () => {
+    if (loggingOut) await logoutDone;
+    const profile = await migrateProfile();
+    if (epoch === profileEpoch && !loggingOut) return profile;
+    await logoutDone;
+    return readProfile();
+  })().finally(() => {
+    if (profilePending === run) profilePending = null;
+  });
+  profilePending = run;
+  return run;
 }
 
 export async function createProfile(input) {
@@ -214,11 +226,25 @@ export async function updateProfile(profile, input) {
 }
 
 export async function logoutProfile() {
-  const profile = await readProfile();
-  if (!profile) return;
-  await fs.mkdir(profilesDir, { recursive: true });
-  await fs.writeFile(path.join(profilesDir, `${profile.id}.json`), JSON.stringify(profile, null, 2), "utf8");
-  await fs.rm(profileFile, { force: true });
+  // Un ensureProfile già partito ha il profilo in memoria. Se non si invalida,
+  // la creazione del libro successivo ignora il nome nuovo e riusa quello vecchio.
+  profileEpoch += 1;
+  profilePending = null;
+  loggingOut = true;
+  let release = () => {};
+  logoutDone = new Promise((resolve) => {
+    release = resolve;
+  });
+  try {
+    const profile = await readProfile();
+    if (!profile) return;
+    await fs.mkdir(profilesDir, { recursive: true });
+    await fs.writeFile(path.join(profilesDir, `${profile.id}.json`), JSON.stringify(profile, null, 2), "utf8");
+    await fs.rm(profileFile, { force: true });
+  } finally {
+    loggingOut = false;
+    release();
+  }
 }
 
 export function localISODate(date = new Date()) {
