@@ -42,6 +42,7 @@ import {
   writeSettings,
 } from "./store.js";
 import { HttpError } from "./errors.js";
+import { bookDocument, pdfFilename, renderBookPdf } from "./printbook.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const publicDir = path.join(root, "public");
@@ -170,6 +171,30 @@ app.get("/api/books/:id", async (req, res, next) => {
   try {
     const book = await requireBook(req.params.id);
     res.json({ book });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/print/:id", async (req, res, next) => {
+  try {
+    const book = await requireBook(req.params.id);
+    if (!book.closing) throw new HttpError(404, "Il libro non è ancora chiuso.");
+    res.type("html").send(bookDocument(book));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/books/:id/pdf", async (req, res, next) => {
+  try {
+    const book = await requireBook(req.params.id);
+    if (!book.closing) throw new HttpError(404, "Il libro non è ancora chiuso.");
+    const pdf = await renderBookPdf(`http://127.0.0.1:${port}/print/${book.id}`);
+    const name = pdfFilename(book);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename*=UTF-8''${encodeURIComponent(name)}`);
+    res.send(pdf);
   } catch (error) {
     next(error);
   }

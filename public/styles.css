@@ -43,9 +43,10 @@
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 
-html, body { margin: 0; min-height: 100%; overflow-x: hidden; }
+html, body { margin: 0; min-height: 100%; overflow-x: clip; }
 html {
   background: var(--peach);
+  scroll-padding-top: 11rem;
   /* 18px at 1440px wide, scaling with the viewport, never below 16px. */
   font-size: max(16px, calc(18px * 100vw / (var(--design-width) * 1px)));
   -webkit-text-size-adjust: 100%;
@@ -156,19 +157,22 @@ h3 {
   z-index: 6;
 }
 .topbar:has(#chrome:not([hidden])) {
-  background: none;
-  border-bottom: 0;
+  background: rgba(237, 217, 204, 0.94);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-bottom: 1px solid rgba(107, 67, 58, 0.1);
 }
 .topbar:has(#chrome[hidden]) {
   position: static;
   background: transparent;
+  border-bottom: 0;
+  backdrop-filter: none;
 }
 .chrome {
   display: block;
-  padding: 0.75rem 1.4rem 0.65rem;
-  background: rgba(237, 217, 204, 0.92);
-  backdrop-filter: blur(10px);
-  border-bottom: 1px solid var(--line);
+  padding: 0.75rem 1.4rem 0.35rem;
+  background: transparent;
+  border-bottom: 0;
 }
 .chrome-row {
   display: flex;
@@ -189,13 +193,39 @@ h3 {
 .chrome-progress {
   margin: 0;
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--muted);
   font-size: 0.9rem;
+}
+.chrome-actions .ghost,
+.chrome-actions .sound-toggle {
+  border: 0;
+  border-radius: 0;
+  padding: 0.15rem 0.05rem;
+  background: none;
+  font-family: var(--serif);
+  font-style: italic;
+  font-weight: 560;
+  font-size: 1.02rem;
+  color: #8a7168;
+  text-decoration: underline;
+  text-underline-offset: 0.22em;
+  text-decoration-thickness: 1px;
+}
+.chrome-actions .sound-toggle[aria-pressed="false"] { text-decoration-style: dotted; }
+.chrome-actions .ghost:hover,
+.chrome-actions .sound-toggle:hover {
+  color: #4a322c;
+  background: none;
+  border-color: transparent;
 }
 .chrome-actions {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 1.15rem;
 }
 
 .story-nav {
@@ -372,10 +402,6 @@ h3 {
 .banner.ok { color: var(--body); }
 
 .sound-toggle {
-  position: fixed;
-  z-index: 8;
-  left: calc(1.25rem + env(safe-area-inset-left));
-  bottom: calc(1.05rem + env(safe-area-inset-bottom));
   border: 0;
   background: none;
   padding: 0.15rem 0.05rem;
@@ -390,6 +416,12 @@ h3 {
   text-underline-offset: 0.22em;
   text-decoration-thickness: 1px;
 }
+.sound-toggle.is-corner {
+  position: fixed;
+  z-index: 8;
+  left: calc(1.25rem + env(safe-area-inset-left));
+  bottom: calc(1.05rem + env(safe-area-inset-bottom));
+}
 .sound-toggle[aria-pressed="false"] {
   text-decoration-style: dotted;
 }
@@ -399,8 +431,7 @@ h3 {
 
 .stage {
   position: relative;
-  min-height: 100vh;
-  overflow-x: hidden;
+  overflow-x: clip;
   perspective: 2800px;
   perspective-origin: 50% 48%;
 }
@@ -502,7 +533,7 @@ h3 {
 .page {
   width: min(var(--paper-max), calc(100% - 2.8rem));
   margin: 0 auto;
-  padding: 2.5rem 0 5.5rem;
+  padding: 2.5rem 0 3.2rem;
   transform: translate3d(0, 0, 0);
 }
 
@@ -706,8 +737,8 @@ body:has(.page.scheda) {
   border-color: rgba(162, 76, 60, 0.7);
 }
 @keyframes coverBreath {
-  0%, 100% { opacity: 0.28; }
-  50% { opacity: 0.92; }
+  0%, 100% { opacity: 0.78; }
+  50% { opacity: 1; }
 }
 
 .ink-trail {
@@ -1862,7 +1893,8 @@ details.json-fold summary {
   float: left;
   font-size: 3.3rem;
   line-height: 0.8;
-  padding: 0.15rem 0.45rem 0 0;
+  padding: 0.12rem 0.7rem 0 0;
+  margin-bottom: 0.08rem;
   color: var(--title);
 }
 .book { max-width: calc(760rem / 18); margin: 0 auto; }
@@ -2064,12 +2096,12 @@ body.is-premiere #banner { opacity: 0; pointer-events: none; }
   box-shadow: none;
 }
 .cinema-cover {
-  min-height: 92vh;
+  min-height: calc(100dvh - 6.4rem);
   display: grid;
   align-content: center;
   justify-items: center;
   text-align: center;
-  padding: 12vh 0.5rem 8vh;
+  padding: 6vh 0.5rem 5vh;
 }
 .cinema-cover h2 {
   margin: 0;
@@ -2101,8 +2133,8 @@ body.is-premiere #banner { opacity: 0; pointer-events: none; }
 .volume-leaf {
   min-height: 78vh;
   padding: 14vh 0 8vh;
-  border-top: 1px solid var(--line);
 }
+.volume-leaf + .volume-leaf { border-top: 1px solid var(--line); }
 .chapter-index {
   margin: 0 0 0.8rem;
   color: var(--subtitle);
@@ -2139,6 +2171,22 @@ body.is-premiere #banner { opacity: 0; pointer-events: none; }
   align-items: center;
   gap: 0.85rem;
   margin: 1.6rem 0 0.4rem;
+}
+#print.ghost {
+  border: 0;
+  padding: 0.1rem 0.2rem;
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: 1.02rem;
+  color: #8a7168;
+  text-decoration: underline;
+  text-underline-offset: 0.22em;
+  text-decoration-thickness: 1px;
+}
+#print.ghost:hover {
+  color: #4a322c;
+  background: none;
+  border-color: transparent;
 }
 
 pre.json-view {
@@ -2254,7 +2302,8 @@ pre.json-view {
 
 dialog {
   width: min(calc(520rem / 18), calc(100% - 2rem));
-  max-height: calc(100% - 2rem);
+  max-height: calc(100dvh - 1.5rem);
+  margin: auto;
   overflow: auto;
   color: var(--ink-text);
   background: var(--paper);
@@ -2309,16 +2358,12 @@ dialog::backdrop { background: rgba(213, 213, 215, 0.55); }
     font-size: 0.78rem;
   }
   .pill { display: none; }
-  #open-settings {
-    border: 0;
-    padding: 0.35rem 0.1rem;
-    font-size: 0.92rem;
+  .chrome-actions .ghost,
+  .chrome-actions .sound-toggle {
+    font-size: 0.95rem;
     white-space: nowrap;
   }
-  .topbar:has(#chrome:not([hidden])) .chrome-actions {
-    margin-right: 4.3rem;
-  }
-  .sound-toggle {
+  .sound-toggle.is-corner {
     top: calc(0.28rem + env(safe-area-inset-top));
     right: calc(0.75rem + env(safe-area-inset-right));
     bottom: auto;
@@ -2417,8 +2462,8 @@ dialog::backdrop { background: rgba(213, 213, 215, 0.55); }
   .chrome { padding-bottom: 0; }
 }
 
-/* Oggi: the page that stays open. The notes fill the screen; the close action stays reachable. */
-@media (max-width: 1080px), (max-height: 680px) {
+/* Oggi: the notes fill the screen; the close action stays reachable. */
+@media (min-width: 0px) {
   html:has(#taccuino-attivo),
   body:has(#taccuino-attivo) {
     height: var(--vvh, 100dvh);
@@ -2429,16 +2474,6 @@ dialog::backdrop { background: rgba(213, 213, 215, 0.55); }
     top: var(--vv-top, 0px);
     left: 0;
     width: 100%;
-  }
-  body:has(#taccuino-attivo) .sound-toggle {
-    position: absolute;
-    top: calc(0.42rem + env(safe-area-inset-top));
-    right: calc(0.75rem + env(safe-area-inset-right));
-    bottom: auto;
-    left: auto;
-  }
-  body:has(#taccuino-attivo) .chrome-actions {
-    margin-right: 4.3rem;
   }
   .stage:has(#taccuino-attivo) {
     display: flex;
@@ -2623,24 +2658,54 @@ dialog::backdrop { background: rgba(213, 213, 215, 0.55); }
 .studio-slot li { margin: 0.2rem 0; }
 .studio-books { margin: 0.8rem 0 1.2rem; }
 
+@page {
+  size: A4;
+  margin: 0;
+}
+
 @media print {
   html { font-size: 18px; }
-  body { background: white; }
+  html, body {
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    background: white !important;
+    position: static !important;
+  }
   body::after { display: none; }
-  .topbar, .chrome, #banner, #busy, .no-print, .cycle-links, .story-nav, .sound-toggle { display: none !important; }
-  .book, .sheet { box-shadow: none; }
+  .topbar, .chrome, #banner, #busy, .no-print, .cycle-links, .story-nav, .sound-toggle,
   .overture, .volume-tools { display: none !important; }
-  .cinema-cover, .volume-leaf, .cinema-back { min-height: 0; }
-  .volume-leaf, .cinema-back { break-before: page; }
-  .cinema-back {
+  .stage, .page, .page.volume-premiere, .book, .cinema-book {
+    display: block !important;
+    width: auto !important;
+    max-width: none !important;
+    min-height: 0 !important;
+    height: auto !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    box-shadow: none;
+    perspective: none !important;
+  }
+  .cinema-cover, .volume-leaf, .cinema-back {
+    box-sizing: border-box;
     width: auto;
-    margin: 2rem 0 0;
-    background: white;
-    color: black;
-    padding: 1rem 0;
+    max-width: none;
+    margin: 0;
+    min-height: 0;
+  }
+  .cinema-cover {
+    min-height: 100vh;
+    padding: 24mm 18mm 18mm;
+  }
+  .volume-leaf, .cinema-back { break-before: page; padding: 16mm 18mm; }
+  .cinema-back {
+    background: white !important;
+    color: black !important;
   }
   .cinema-back .eyebrow,
   .cinema-back .prose,
   .cinema-back p,
   .cinema-back .prose p:first-of-type::first-letter { color: black; }
+  .prose { max-width: 38rem; }
 }

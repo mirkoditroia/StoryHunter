@@ -887,11 +887,12 @@ function render() {
     window.setTimeout(() => settle(), dissolving ? 1400 : 1100);
   }
 
+  placeSound();
+  if (state.motion !== "replace") window.scrollTo(0, 0);
   if (state.view === "notebook") {
     const last = state.book?.days.at(-1);
     if (last) document.getElementById(`chapter-${last.day}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
-  if (state.view === "lettura") window.scrollTo(0, 0);
   if (state.view === "volume") armPremiere();
   if (state.view === "soglia" && state.pactArrive && !prefersReducedMotion()) {
     armPactReveal();
@@ -899,6 +900,7 @@ function render() {
     pactRevealGen += 1;
   }
   syncAmbience();
+  syncDocumentTitle();
 }
 
 function renderChrome() {
@@ -916,6 +918,10 @@ function renderChrome() {
     progress.textContent = "Osservatorio";
     return;
   }
+  if (state.view === "volume") {
+    progress.textContent = book.closing?.book_title || book.book_config.protagonist.name;
+    return;
+  }
   if (state.view === "today") {
     progress.textContent = `${book.book_config.protagonist.name} · taccuino`;
     return;
@@ -930,8 +936,27 @@ function renderChrome() {
   const day = Math.min(book.book_config.current_day, book.book_config.total_days);
   const done = book.book_config.current_day > book.book_config.total_days;
   progress.textContent = done
-    ? `${book.book_config.protagonist.name} · ${roman(book.book_config.total_days)} / ${roman(book.book_config.total_days)}`
+    ? book.closing?.book_title || `${book.book_config.protagonist.name} · ${roman(book.book_config.total_days)} / ${roman(book.book_config.total_days)}`
     : `${book.book_config.protagonist.name} · ${roman(day)} / ${roman(book.book_config.total_days)}`;
+}
+
+function syncDocumentTitle() {
+  const title = state.view === "volume" ? state.book?.closing?.book_title : "";
+  document.title = title || "Storyhunter";
+}
+
+function placeSound() {
+  const sound = $("#toggle-sound");
+  const chrome = $("#chrome");
+  const actions = document.querySelector(".chrome-actions");
+  if (!sound || !chrome || !actions) return;
+  if (chrome.hidden) {
+    sound.classList.add("is-corner");
+    if (sound.parentElement !== document.body) document.body.append(sound);
+    return;
+  }
+  sound.classList.remove("is-corner");
+  if (sound.parentElement !== actions) actions.prepend(sound);
 }
 
 function cycleComplete(book = state.book) {
@@ -961,10 +986,7 @@ function storyNavLinks() {
   if (done) items.push(["new", "Nuova storia"]);
   return items
     .map(([id, label]) => {
-      const on =
-        (id === "libri" && state.view === "volume") ||
-        (id === "today" && state.view === "today") ||
-        (id !== "today" && id === state.view);
+      const on = id === state.view;
       const fresh = id === "new" && done ? " is-fresh" : "";
       return `<button type="button" class="nav-link${on ? " is-on" : ""}${fresh}" data-nav="${id}"${on ? ' aria-current="page"' : ""}>${label}</button>`;
     })
@@ -2904,7 +2926,17 @@ async function onClick(event) {
     await openTheBook();
     return;
   }
-  if (event.target.closest("#print")) window.print();
+  if (event.target.closest("#print")) {
+    printBook();
+    return;
+  }
+}
+
+function printBook() {
+  const book = state.book;
+  if (!book?.closing) return;
+  const tab = window.open(`/api/books/${book.id}/pdf`, "_blank");
+  if (!tab) setBanner("error", "Il browser ha bloccato la scheda del libro.");
 }
 
 async function mutateBook(path, view) {
